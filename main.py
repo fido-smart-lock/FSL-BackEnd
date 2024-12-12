@@ -444,7 +444,6 @@ def get_user_by_lockId_role( lockId: int, role: str ):
         'lockId': lock['lockId'],
         'lockName': lock['lockName'],
         'lockLocation': lock['lockLocation'],
-        'role': role,
         'dataList': userList
     }
 
