@@ -7,7 +7,7 @@ import requests
 import os
 import hashlib, uuid
 from datetime import datetime
-from database import User, Lock, History, Request, UserRole, User_Signup
+from database import User, Lock, History, Request, UserRole, User_Signup, NewLock, NewRequest, NewInvitation, Invitation
 import random
 
 app = FastAPI()
@@ -110,11 +110,58 @@ def generate_user_id( firstName, lastName ):
 
     return userId
 
+# generate request id
+def generate_request_id():
+    '''
+        Generate request id
+        Input: None
+        Output: request id (str)
+    '''
+
+    # Connect to database
+    collection = db['Request']
+
+    # Generate request id
+    requestId = 'RQ' + str( collection.count_documents( {} ) + 1 ).zfill( 5 )
+
+    number = 2
+    #   Check if request id already exists
+    while collection.find_one( { 'requestId' : requestId }, { '_id' : 0 } ):
+        requestId = 'EV' + str( collection.count_documents( {} ) + number ).zfill( 5 )
+        number += 1
+
+    return requestId
+
+# generate invitation id
+def generate_invitation_id():
+    '''
+        Generate invitation id
+        Input: None
+        Output: invitation id (str)
+    '''
+
+    # Connect to database
+    collection = db['Invitation']
+
+    # Generate invitation id
+    invitationId = 'IV' + str( collection.count_documents( {} ) + 1 ).zfill( 5 )
+
+    number = 2
+    #   Check if invitation id already exists
+    while collection.find_one( { 'invitationId' : invitationId }, { '_id' : 0 } ):
+        invitationId = 'IV' + str( collection.count_documents( {} ) + number ).zfill( 5 )
+        number += 1
+
+    return invitationId
 
 
 ##################################################
 #
 #   API
+#
+
+##################################################
+#   Login/Register
 #
 
 # root
@@ -175,6 +222,10 @@ def login( email: str, password: str ):
     if not user:
         raise HTTPException( status_code = 404, detail = "User not found" )
     
+##################################################
+#   Lock Mangement
+#
+
 # get admin lock
 @app.get('/admin/lock/{lockId}', tags=['Create New Lock'])
 def get_admin_lock( lockId: int ):
@@ -206,6 +257,7 @@ def get_admin_lock( lockId: int ):
 
     # connect to database
     collection = db['Locks']
+    userCollection = db['Users']
 
     # get lock
     lock = collection.find_one( { 'lockId': lockId }, { '_id': 0 } )
@@ -223,8 +275,8 @@ def get_admin_lock( lockId: int ):
                 'userName': user['firstName'],
                 'userSurname': user['lastName'],
             }
-            for user in lock['user']
-            if user['userRole'] == 'admin'
+            for userId in lock['roleToUserIdListDict']['admin']
+            for user in userCollection.find( { 'userId': userId }, { '_id': 0 } )
         ]
     }
 
@@ -293,6 +345,7 @@ def get_user_lock(userId: str, lockLocationActiveStr: str = None):
 
     # connect to database
     collection = db['Users']
+    lockCollection = db['Locks']
 
     # get user
     user = collection.find_one( { 'userId': userId }, { '_id': 0 } )
@@ -305,22 +358,25 @@ def get_user_lock(userId: str, lockLocationActiveStr: str = None):
     if not lockLocationActiveStr:
         # set lock loaction active is first element of lock location list
         lockLocationActiveStr = lockLocationList[0]
+
+    dataList = list()
+
+    for lockIdList in user['userRoleToLockListDict'].values():
+        for lockId in lockIdList:
+            lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+            if lockLocationActiveStr == lock['lockLocation']:
+                dataList.append( {
+                    'lockId': lock['lockId'],
+                    'lockImage': lock['lockImage'],
+                    'lockName': lock['lockName'],
+                } )
        
     # get user lock
     userLock = {
         'userId': user['userId'],
         'userName': user['firstName'],
         'lockLocation': lockLocationActiveStr,
-        'dataList': [
-            {
-                'lockId': lock['lockId'],
-                'lockImage': lock['lockImage'],
-                'lockName': lock['lockName'],
-            }
-            for lockList in user['userRoleToLockListDict'].values()
-            for lock in lockList
-            if lockLocationActiveStr == lock['lockLocation']
-        ]
+        'dataList': dataList,
     }
 
     return userLock
@@ -358,18 +414,32 @@ def get_lock_detail( lockId: int, userId: str ):
     '''
 
     # connect to database
-    collection = db['Locks']
+    lockCollection = db['Locks']
+    userCollection = db['Users']
 
     # get lock
-    lock = collection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+    lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
     if not lock:
         raise HTTPException( status_code = 404, detail = "Lock not found" )
     
     # check if user is admin then set isAdmin to True
     isAdmin = False
-    for user in lock['user']:
-        if user['userId'] == userId and user['userRole'] == 'admin':
+    for role, userIdList in lock['roleToUserIdListDict'].items():
+        if userId in userIdList and role == 'admin':
             isAdmin = True
+
+    dataList = list()
+
+    for userIdList in lock['roleToUserIdListDict'].values:
+        for userId in userIdList:
+            user = userCollection.find_one( { 'userId': userId }, { '_id': 0 } )
+            dataList.append( {
+                'userId': user['userId'],
+                'userName': user['firstName'],
+                'userImage': user['userImage'],
+                'role': user['userRole'],
+            } )
+        
 
     # get dict of lock detail
     lockDetail = {
@@ -379,20 +449,13 @@ def get_lock_detail( lockId: int, userId: str ):
         'lockImage': lock['lockImage'],
         'securityStatus': lock['securityStatus'],
         'isAdmin': isAdmin,
-        'dataList': [
-            {
-                'userId': user['userId'],
-                'userName': user['firstName'],
-                'userImage': user['userImage'],
-                'role': user['userRole'],
-            }
-            for user in lock['user']
-        ]
+        'dataList': dataList
     }
 
     return lockDetail
 
 # get user of this lock by lockId and interested role
+# userId???
 @app.get('/lock/role/{lockId}/{role}', tags=['Role Setting'])
 def get_user_by_lockId_role( lockId: int, role: str ):
     '''
@@ -418,33 +481,35 @@ def get_user_by_lockId_role( lockId: int, role: str ):
     '''
 
     # connect to database
-    collection = db['Locks']
+    lockCollection = db['Locks']
+    userCollection = db['Users']
 
     # get lock
-    lock = collection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+    lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
     if not lock:
         raise HTTPException( status_code = 404, detail = "Lock not found" )
     
-    # get user by role
-    userList = [
-        {
-            'userId': user['userId'],
-            'userName': user['firstName'],
-            'userSurname': user['lastName'],
-            'userImage': user['userImage'],
-            'role': user['userRole'],
-            'dateTime': user['dateTime'] if 'dateTime' in user else None,
-        }
-        for user in lock['user']
-        if user['userRole'] == role
-    ]
+    dataList = list()
+
+    # get user of lock by role
+    for userIdList in lock['roleToUserIdListDict'][role]:
+        for userId in userIdList:
+            user = userCollection.find_one( { 'userId': userId }, { '_id': 0 } )
+            dataList.append( {
+                'userId': user['userId'],
+                'userName': user['firstName'],
+                'userSurname': user['lastName'],
+                'userImage': user['userImage'],
+                'role': user['userRole'],
+                'dateTime': user['datetime'],
+            } )
 
     # get dict of user by role
     userByRole = {
         'lockId': lock['lockId'],
         'lockName': lock['lockName'],
         'lockLocation': lock['lockLocation'],
-        'dataList': userList
+        'dataList': dataList
     }
 
     return userByRole
@@ -495,4 +560,241 @@ def get_user_by_userCode( userCode: int ):
 
     return userByUserCode
 
+# get history by lockId
+@app.get('/history/{lockId}', tags=['History'])
+def get_history_by_lockId( lockId: int ):
+    '''
+        get history by lockId
+        input: lockId (int)
+        output: dict of history
+        for example:
+        {
+            "lockId": "12345",
+            "lockName": "Front Door",
+            "lockLocation": "Home",
+            "dataList": [
+                {
+                    "userImage": null,
+                    "dateTime": "2024-10-23T02:33:15",
+                    "userName": null,
+                    "status": "risk"
+                },
+                {
+                    "userImage": "https://i.postimg.cc/3rBxMwmj/james-Corner.png",
+                    "dateTime": "2024-10-23T08:57:52",
+                    "userName": "James Corner",
+                    "status": "connect"
+                },
+                {
+                    "userImage": "https://i.postimg.cc/Fzgf8gm0/anna-House.png",
+                    "dateTime": "2024-10-23T17:55:52",
+                    "userName": "Anna House",
+                    "status": "req"
+                },
+                {
+                    "userImage": "https://i.postimg.cc/BQnQJGBr/taylor-Wang.png",
+                    "dateTime": "2024-10-22T07:15:05",
+                    "userName": "Taylor Wang",
+                    "status": "connect"
+                },
+                {
+                    "userImage": "https://i.postimg.cc/jdtLgPgX/jonathan-Smith.png",
+                    "dateTime": "2024-10-22T15:05:47",
+                    "userName": "Jonathan Smith",
+                    "status": "connect"
+                },
+                {
+                    "userImage": "https://i.postimg.cc/BQnQJGBr/taylor-Wang.png",
+                    "dateTime": "2024-10-18T18:41:12",
+                    "userName": "Taylor Wang",
+                    "status": "connect"
+                },
+                {
+                    "userImage": "https://i.postimg.cc/jdtLgPgX/jonathan-Smith.png",
+                    "dateTime": "2024-10-18T21:26:33",
+                    "userName": "Jonathan Smith",
+                    "status": "connect"
+                }
+            ]
+        }
+    '''
 
+    # connect to database
+    collection = db['Locks']
+
+    # get lock
+    lock = collection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+    if not lock:
+        raise HTTPException( status_code = 404, detail = "Lock not found" )
+    
+    # get dict of history by lockId
+    historyByLockId = {
+        'lockId': lock['lockId'],
+        'lockName': lock['lockName'],
+        'lockLocation': lock['lockLocation'],
+        'dataList': lock['history']
+    }
+
+    return historyByLockId
+
+# post new lock
+@app.post('/newLock', tags=['Create New Lock'])
+def post_new_lock( new_lock: NewLock ):
+    '''
+        post new lock to Lock format
+        update lock location list and user role to lock id list dict in user
+        input: NewLock
+        output: dict of new lock
+        for example:
+        {
+            "userId": "js7694",
+            "lockId": "12345",
+            "message": "Create new lock successfully"
+        }
+    '''
+    # if lock is already exists
+    if collection.find_one( { 'lockId': new_lock.lockId } ):
+        raise HTTPException( status_code = 400, detail = "Lock already exists" )
+    
+    # if user is already have this lockId
+    if userCollection.find_one( { 'userId': new_lock.userId, 'userRoleToLockIdListDict.admin': new_lock.lockId } ):
+        raise HTTPException( status_code = 400, detail = "User already have this lock" )
+
+    # connect to database
+    collection = db['Locks']
+    userCollection = db['Users']
+
+    # create new lock
+    newLock = Lock(
+        lockId = new_lock.lockId,
+        lockName = new_lock.lockName,
+        lockLocation = new_lock.lockLocation,
+        lockImage = new_lock.lockImage,
+        lockStatus = 'secure',
+        securityStatus = 'secure',
+        roleToUserIdListDict = {
+            'admin': [ new_lock.userId ],
+            'member': [],
+        },
+        invitation = [],
+        request = [],
+        history = [],
+    )
+
+    # add new lock to database
+    collection.insert_one( newLock.dict() )
+
+    # update lock location list in user
+    # NOTE: add new lock location to lock location list
+    userCollection.update_one( { 'userId': new_lock.userId }, { '$push': { 'lockLocationList': new_lock.lockLocation } } )
+    
+    # update user role to lock id list dict
+    # NOTE: add new lock to admin role by append new lock id to admin list
+    userCollection.update_one( { 'userId': new_lock.userId }, { '$push': { 'userRoleToLockIdListDict.admin': new_lock.lockId } } )
+
+    return { 'userId': new_lock.userId, 'lockId': new_lock.lockId, 'message': 'Create new lock successfully' }
+
+# post new request
+@app.post('/request', tags=['Create New Lock'])
+def post_new_request( new_request: NewRequest ):
+    '''
+        post new request to Request format
+        post new request to lock
+        input: NewRequest
+        output: dict of new request
+        for example:
+        {
+            "lockId": "12345",
+            "userId": "tw8769",
+            "message": "Send request successfully"
+        }
+    '''
+
+    # connect to database
+    collection = db['Request']
+    lockCollection = db['Locks']
+
+    # if request is already exists and request status is not expired
+    if collection.find_one( { 'lockId': new_request.lockId, 'userId': new_request.userId, 'requestStatus': { '$ne': 'expired' } } ):
+        raise HTTPException( status_code = 400, detail = "Request already exists" )
+
+    # create new request
+    newRequest = Request(
+        requestId = generate_request_id(),
+        lockId = new_request.lockId,
+        userId = new_request.userId,
+        requestType = new_request.requestType,
+        requestStatus = new_request.requestStatus,
+        requestDateTime = datetime.now(),
+    )
+
+    # add new request to database
+    collection.insert_one( newRequest.dict() )
+
+    # update request to lock
+    # NOTE: add new request to lock by append new request to request list
+    lockCollection.update_one( { 'lockId': new_request.lockId }, { '$push': { 'request': newRequest.dict() } } )
+
+    return { 'lockId': new_request.lockId, 'userId': new_request.userId, 'message': 'Send request successfully' }
+
+# post new invitation
+@app.post('/invitation', tags=['Add New People'])
+def post_new_invitation( new_invitation: Invitation ):
+    '''
+        post new invitation to Invitation format
+        post new invitation to lock
+        input: Invitation
+        output: dict of new invitation
+        for example:
+        {
+            "lockId": "12345",
+            "userId": "tw8769",
+            "message": "Send invitation successfully"
+        }
+    '''
+
+    # connect to database
+    collection = db['Invitation']
+    lockCollection = db['Locks']
+
+    # create new invitation
+    newInvitation = Invitation(
+        invitationId = generate_invitation_id(),
+        lockId = new_invitation.lockId,
+        userId = new_invitation.userId,
+        invitationStatus = new_invitation.invitationStatus,
+        invitationDateTime = datetime.now(),
+    )
+
+    # add new invitation to database
+    collection.insert_one( newInvitation.dict() )
+
+    # update invitation to lock
+    # NOTE: add new invitation to lock by append new invitation to invitation list
+    lockCollection.update_one( { 'lockId': new_invitation.lockId }, { '$push': { 'invitation': newInvitation.dict() } } )
+
+    return { 'lockId': new_invitation.lockId, 'userId': new_invitation.userId, 'message': 'Send invitation successfully' }
+    
+# post lock location
+@app.post('/lockLocation/{userId}', tags=['Locks Setting'])
+def post_lock_location( userId: str, lockLocation: str ):
+    '''
+        post lock location to User format
+        and append lock location to lock location list
+        input: userId (str) and lockLocation (str)
+        output: dict of lock location
+        for example:
+        {
+            "userId": "js7694",
+            "locationName": "Home"
+            "message": "Create lock location successfully"
+        }
+    '''
+
+    # connect to database
+    collection = db['Users']
+
+    # update lock location
+    collection.update_one( { 'userId': userId }, { '$push': { 'lockLocationList': lockLocation } } )
+
+    return { 'userId': userId, 'message': 'Update lock location successfully' }
