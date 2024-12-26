@@ -29,12 +29,11 @@ class History( BaseModel ):
 
 # class for request
 class Request( BaseModel ):
-    id: int
+    reqId: str
     userId: str
     lockId: str
     requestStatus: str
-    time: datetime
-    expireTime: datetime
+    datetime: datetime
 
 # class for new request
 class NewRequest( BaseModel ):
@@ -51,7 +50,7 @@ class NewInvitation( BaseModel ):
 
 # class for invitation
 class Invitation( BaseModel ):
-    id: int
+    id: str
     userId: str
     userCode : int
     userRole: str
@@ -60,27 +59,48 @@ class Invitation( BaseModel ):
     time: datetime
     expireTime: datetime
 
+# class for connection
+class Connection( BaseModel ):
+    conId: str
+    userId: str
+    userRole: str
+    lockId: str
+    datetime: datetime
+
+# class for other
+class Other( BaseModel ):
+    otherId: int
+    subMode: str
+    userId: str
+    userRole: str
+    lockId: str
+    datetime: datetime
+
 # class for warning
 class Warning( BaseModel ):
-    id: int
+    warningId: int
+    subMode: str
     userId: str
     userRole: str
     lockId: str
     lockLocation: str
-    time: datetime
+    datetime: datetime
     securityStatus: str
 
 # class for notification
+# NOTE: should it be have??? or 1. seperate to request invite warning 2. everything collect in notofication but seperate by mode
 class Notification( BaseModel ):
-    id: int
+    notiId: int
+    mode: str
+    datetime: datetime
+    subMode: str
+    amount: int
     type: str
     userId: str
     userRole: str
     lockId: str
-    time: datetime
-    request: List[ Request ]
-    warning: List[ Warning ]
-    invitation: List[ Invitation ]
+    lockLocation: str
+    lockName: str
 
 # class for users role
 class UserRole( BaseModel ):
@@ -102,6 +122,7 @@ class NewLock( BaseModel ):
 class Lock( BaseModel ):
     lockId: int
     lockName: str
+    lockImage: str
     lockStatus: str
     lockLocation: str
     securityStatus: str
@@ -109,8 +130,7 @@ class Lock( BaseModel ):
     invitation: List[ Invitation ]
     request: List[ Request ]
     history: List[ History ]
-    time: datetime
-    lockImage: str
+    warning: List[ Warning ]
 
 # class for lock details
 class LockDetails( BaseModel ):

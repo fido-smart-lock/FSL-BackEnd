@@ -7,7 +7,7 @@ import requests
 import os
 import hashlib, uuid
 from datetime import datetime
-from database import User, Lock, History, Request, UserRole, User_Signup, NewLock, NewRequest, NewInvitation, Invitation
+from database import User, Lock, History, Request, UserRole, User_Signup, NewLock, NewRequest, NewInvitation, Invitation, Other
 import random
 
 app = FastAPI()
@@ -122,18 +122,18 @@ def generate_request_id():
     collection = db['Request']
 
     # Generate request id
-    requestId = 'RQ' + str( collection.count_documents( {} ) + 1 ).zfill( 5 )
+    requestId = 'req' + str( collection.count_documents( {} ) + 1 ).zfill( 5 )
 
     number = 2
     #   Check if request id already exists
     while collection.find_one( { 'requestId' : requestId }, { '_id' : 0 } ):
-        requestId = 'EV' + str( collection.count_documents( {} ) + number ).zfill( 5 )
+        requestId = 'req' + str( collection.count_documents( {} ) + number ).zfill( 5 )
         number += 1
 
     return requestId
 
-# generate invitation id
-def generate_invitation_id():
+# # generate invitation id
+# def generate_invitation_id():
     '''
         Generate invitation id
         Input: None
@@ -154,6 +154,49 @@ def generate_invitation_id():
 
     return invitationId
 
+# generate connect id
+def generate_connect_id():
+    '''
+        Generate connect id
+        Input: None
+        Output: connect id (str)
+    '''
+
+    # Connect to database
+    collection = db['Connect']
+
+    # Generate connect id
+    connectId = 'con' + str( collection.count_documents( {} ) + 1 ).zfill( 5 )
+
+    number = 2
+    #   Check if connect id already exists
+    while collection.find_one( { 'connectId' : connectId }, { '_id' : 0 } ):
+        connectId = 'con' + str( collection.count_documents( {} ) + number ).zfill( 5 )
+        number += 1
+
+    return connectId
+
+# generate other id
+def generate_other_id():
+    '''
+        Generate other id
+        Input: None
+        Output: other id (str)
+    '''
+
+    # Connect to database
+    collection = db['Other']
+
+    # Generate other id
+    otherId = 'other' + str( collection.count_documents( {} ) + 1 ).zfill( 5 )
+
+    number = 2
+    #   Check if other id already exists
+    while collection.find_one( { 'otherId' : otherId }, { '_id' : 0 } ):
+        otherId = 'other' + str( collection.count_documents( {} ) + number ).zfill( 5 )
+        number += 1
+
+    return otherId
 
 ##################################################
 #
@@ -679,6 +722,7 @@ def post_new_lock( new_lock: NewLock ):
         invitation = [],
         request = [],
         history = [],
+        warning = [],
     )
 
     # add new lock to database
@@ -700,6 +744,7 @@ def post_new_request( new_request: NewRequest ):
     '''
         post new request to Request format
         post new request to lock
+        post send request to Other( subMode = sent )
         input: NewRequest
         output: dict of new request
         for example:
@@ -713,19 +758,19 @@ def post_new_request( new_request: NewRequest ):
     # connect to database
     collection = db['Request']
     lockCollection = db['Locks']
+    otherCollection = db['Other']
 
-    # if request is already exists and request status is not expired
-    if collection.find_one( { 'lockId': new_request.lockId, 'userId': new_request.userId, 'requestStatus': { '$ne': 'expired' } } ):
+    # if request is already exists
+    if collection.find_one( { 'lockId': new_request.lockId, 'userId': new_request.userId } ):
         raise HTTPException( status_code = 400, detail = "Request already exists" )
 
     # create new request
     newRequest = Request(
-        requestId = generate_request_id(),
+        reqId = generate_request_id(),
         lockId = new_request.lockId,
         userId = new_request.userId,
-        requestType = new_request.requestType,
         requestStatus = new_request.requestStatus,
-        requestDateTime = datetime.now(),
+        datetime = datetime.now(),
     )
 
     # add new request to database
@@ -735,11 +780,25 @@ def post_new_request( new_request: NewRequest ):
     # NOTE: add new request to lock by append new request to request list
     lockCollection.update_one( { 'lockId': new_request.lockId }, { '$push': { 'request': newRequest.dict() } } )
 
+    # create new other
+    # NOTE: create new other with subMode = sent
+    newOther = Other(
+        otherId = generate_other_id(),
+        subMode = 'sent',
+        userId = new_request.userId,
+        userRole = None,
+        lockId = new_request.lockId,
+        datetime = datetime.now(),
+    )
+
+    # add new other to database
+    otherCollection.insert_one( newOther.dict() )
+
     return { 'lockId': new_request.lockId, 'userId': new_request.userId, 'message': 'Send request successfully' }
 
 # post new invitation
 @app.post('/invitation', tags=['Add New People'])
-def post_new_invitation( new_invitation: Invitation ):
+def post_new_invitation( new_invitation: NewInvitation ):
     '''
         post new invitation to Invitation format
         post new invitation to lock
@@ -754,12 +813,12 @@ def post_new_invitation( new_invitation: Invitation ):
     '''
 
     # connect to database
-    collection = db['Invitation']
+    collection = db['Other']
     lockCollection = db['Locks']
 
     # create new invitation
     newInvitation = Invitation(
-        invitationId = generate_invitation_id(),
+        invitationId = generate_other_id(),
         lockId = new_invitation.lockId,
         userId = new_invitation.userId,
         invitationStatus = new_invitation.invitationStatus,
@@ -798,3 +857,510 @@ def post_lock_location( userId: str, lockLocation: str ):
     collection.update_one( { 'userId': userId }, { '$push': { 'lockLocationList': lockLocation } } )
 
     return { 'userId': userId, 'message': 'Update lock location successfully' }
+
+# get notofication request mode list by userId
+@app.get('/notification/request/{userId}', tags=['Notifications'])
+def get_request_notification_list( userId: str ):
+    '''
+        get request list in notification format by userId and order by date time
+        input: userId (str)
+        output: dict of notification list
+        for example of request mode:
+        {
+            "userId": "js8974",
+            "mode": "req",
+            "dataList": [
+            {
+                "notiId": "req01",
+                "dateTime": "2024-10-25T19:47:10",
+                "subMode": null,
+                "amount": 3, (for count amount of request of lock)
+                "lockId": "12345",
+                "lockLocation": "Home",
+                "lockName": "Front Door",
+                "userName": "Alice",
+                "userSurname": "Johnson",
+                "role": null
+            },
+            {
+                "notiId": "req02",
+                "dateTime": "2024-10-25T16:33:22",
+                "subMode": null,
+                "amount": 7,
+                "lockId": "67890",
+                "lockLocation": "Home",
+                "lockName": "Garage",
+                "userName": "Michael",
+                "userSurname": "Smith",
+                "role": null
+            },
+            {
+                "notiId": "req03",
+                "dateTime": "2024-10-25T13:58:47",
+                "subMode": null,
+                "amount": 2,
+                "lockId": "23456",
+                "lockLocation": "Home",
+                "lockName": "Backdoor",
+                "userName": "Emma",
+                "userSurname": "Brown",
+                "role": null
+            },
+            {
+                "notiId": "req04",
+                "dateTime": "2024-10-25T11:24:15",
+                "subMode": null,
+                "amount": 9,
+                "lockId": "34567",
+                "lockLocation": "Office",
+                "lockName": "Office Lock",
+                "userName": "David",
+                "userSurname": "Wilson",
+                "role": null
+            },
+            {
+                "notiId": "req05",
+                "dateTime": "2024-10-25T09:12:30",
+                "subMode": null,
+                "amount": 5,
+                "lockId": "45678",
+                "lockLocation": "Office",
+                "lockName": "Storage",
+                "userName": "Olivia",
+                "userSurname": "Garcia",
+                "role": null
+            }
+        ]
+    }
+    '''
+
+    # connect to database
+    collection = db['Request']
+    userCollection = db['Users']
+    lockCollection = db['Locks']
+
+    # get all request
+    requests = list( collection.find( { 'userId': userId }, { '_id': 0 } ) )
+
+    # get request in notificaton format
+    requestList = [
+        {
+            'notiId': request['reqId'],
+            'dateTime': request['datetime'],
+            'subMode': None,
+            'amount': len( lock['request'] ),
+            'lockId': request['lockId'],
+            'lockLocation': lock['lockLocation'],
+            'lockName': lock['lockName'],
+            'userName': user['firstName'],
+            'userSurname': user['lastName'],
+            'role': None,
+        }
+        for request in requests
+        for user in userCollection.find( { 'userId': request['userId'] }, { '_id': 0 } )
+        for lock in lockCollection.find( { 'lockId': request['lockId'] }, { '_id': 0 } )
+    ]
+
+    # get dict of notification list
+    notificationList = {
+        'userId': userId,
+        'mode': 'req',
+        'dataList': requestList
+    }
+
+    return notificationList
+
+# get notification connection mode list by userId
+app.get('/notification/connection/{userId}', tags=['Notifications'])
+def get_connect_notification_list( userId: str ):
+    '''
+        get connect list in notification format by userId and order by date time
+        input: userId (str)
+        output: dict of notification list
+        for example of connection mode:
+        {
+            "userId": "js8974",
+            "mode": "connect",
+            "dataList": [
+            {
+                "notiId": "con01",
+                "dateTime": "2024-10-25T14:25:09",
+                "subMode": null,
+                "amount": null,
+                "lockId": "12345",
+                "lockLocation": "Home",
+                "lockName": "Front Door",
+                "userName": "Liam",
+                "userSurname": "Martinez",
+                "role": null
+            },
+            {
+                "notiId": "con02",
+                "dateTime": "2024-10-25T10:50:32",
+                "subMode": null,
+                "amount": null,
+                "lockId": "13458",
+                "lockLocation": "Office",
+                "lockName": "Server Room",
+                "userName": "Sophia",
+                "userSurname": "Davis",
+                "role": null
+            },
+            {
+                "notiId": "con03",
+                "dateTime": "2024-10-25T08:15:45",
+                "subMode": null,
+                "amount": null,
+                "lockId": "12349",
+                "lockLocation": "Home",
+                "lockName": "Reception Door Lock",
+                "userName": "James",
+                "userSurname": "Taylor",
+                "role": null
+            }
+        ]
+    }
+    '''
+
+    # connect to database
+    collection = db['Connect']
+    userCollection = db['Users']
+    lockCollection = db['Locks']
+
+    # get all connect
+    connects = list( collection.find( { 'userId': userId }, { '_id': 0 } ) )
+
+    # get connect in notificaton format
+    connectList = [
+        {
+            'notiId': connect['connectId'],
+            'dateTime': connect['datetime'],
+            'subMode': None,
+            'amount': None,
+            'lockId': connect['lockId'],
+            'lockLocation': lock['lockLocation'],
+            'lockName': lock['lockName'],
+            'userName': user['firstName'],
+            'userSurname': user['lastName'],
+            'role': None,
+        }
+        for connect in connects
+        for user in userCollection.find( { 'userId': connect['userId'] }, { '_id': 0 } )
+        for lock in lockCollection.find( { 'lockId': connect['lockId'] }, { '_id': 0 } )
+    ]
+
+    # get dict of notification list
+    notificationList = {
+        'userId': userId,
+        'mode': 'connect',
+        'dataList': connectList
+    }
+
+    return notificationList
+
+# # get notification other mode list by userId
+# @app.get('/notification/other/{userId}', tags=['Notifications'])
+# def get_other_notification_list( userId: str ):
+    '''
+        get other list in notification format by userId and order by date time
+        input: userId (str)
+        output: dict of notification list
+        for example of other mode:
+        {
+            "userId": "js8974",
+            "mode": "other",
+            "dataList": [
+            {
+                "notiId": "other01",
+                "dateTime": "2024-10-25T18:30:25",
+                "subMode": "invite",
+                "amount": null,
+                "lockId": "12345",
+                "lockLocation": "Home",
+                "lockName": "Front Door",
+                "userName": "Mason",
+                "userSurname": "Johnson",
+                "role": "admin"
+            },
+            {
+                "notiId": "other02",
+                "dateTime": "2024-10-25T16:15:50",
+                "subMode": "sent",
+                "amount": null,
+                "lockId": "67890",
+                "lockLocation": "Home",
+                "lockName": "Garage",
+                "userName": "",
+                "userSurname": ""
+                "role": ""
+            },
+            {
+                "notiId": "other03",
+                "dateTime": "2024-10-25T14:10:05",
+                "subMode": "accepted",
+                "amount": null,
+                "lockId": "89046",
+                "lockLocation": "Office",
+                "lockName": "Office Door",
+                "userName": "",
+                "userSurname": "",
+                "role": ""
+            },
+            {
+                "notiId": "other04",
+                "dateTime": "2024-10-25T12:05:35",
+                "subMode": "invite",
+                "amount": null,
+                "lockId": "78457",
+                "lockLocation": "",
+                "lockName": "Backyard",
+                "userName": "Ella",
+                "userSurname": "Brown",
+                "role": "member"
+            },
+            {
+                "notiId": "other05",
+                "dateTime": "2024-10-25T09:45:20",
+                "subMode": "sent",
+                "amount": null,
+                "lockId": "90356",
+                "lockLocation": "Office",
+                "lockName": "Storage",
+                "userName": "",
+                "userSurname": "",
+                "role": ""
+            }
+        ]
+        }
+    '''
+
+# get notification warning mode list by userId
+@app.get('/notification/warning/view/{userId}', tags=['Notifications'])
+def get_warning_main_notification_list( userId: str ):
+    '''
+        get warning list in notification format by userId and order by date time
+        input: userId (str)
+        output: dict of notification list
+        for example of warning mode:
+        {
+            "userId": "js8974",
+            "mode": "warning",
+            "subMode": "main",
+            "dataList": [
+            {
+                "dateTime": "2024-10-25T18:45:03",
+                "amount": 2,
+                "lockId": "12345",
+                "lockLocation": "Home",
+                "lockName": "Front Door",
+                "error": null,
+            },
+            {
+                "dateTime": "2024-10-25T15:27:18",
+                "amount": 7,
+                "lockId": "12345",
+                "lockLocation": "Home",
+                "lockName": "Garage",
+                "error": null,
+            },
+            {
+                "dateTime": "2024-10-25T12:34:56",
+                "amount": 3,
+                "lockId": "12345",
+                "lockLocation": "Office",
+                "lockName": "Office Door",
+                "error": null,
+            }
+        ]
+    }
+    '''
+
+    # connect to database
+    collection = db['Warning']
+    lockCollection = db['Locks']
+
+    # get all warning
+    warnings = list( collection.find( { 'userId': userId }, { '_id': 0 } ) )
+
+    # get warning in notificaton format
+    warningList = [
+        {
+            'dateTime': warning['datetime'],
+            'amount': len( lock['warning'] ),
+            'lockId': warning['lockId'],
+            'lockLocation': lock['lockLocation'],
+            'lockName': lock['lockName'],
+            'error': warning['error'],
+        }
+        for warning in warnings
+        for lock in lockCollection.find( { 'lockId': warning['lockId'] }, { '_id': 0 } )
+    ]
+
+    # get dict of notification list
+    notificationList = {
+        'userId': userId,
+        'mode': 'warning',
+        'subMode': 'main',
+        'dataList': warningList
+    }
+
+    return notificationList
+
+# get notification warning mode list by userId 
+@app.get('/notification/warning/view/{userId}', tags=['Notifications'])
+def get_warning_view_notification_list( userId: str ):
+    '''
+        get warning list in notification format by userId and order by date time
+        input: userId (str)
+        output: dict of notification list
+        for example of warning mode:
+        {
+            "userId": "js8974",
+            "mode": "warning",
+            "subMode": "view",
+            "dataList": [
+            {
+                "dateTime": "2024-10-25T18:45:03",
+                "amount": null,
+                "lockId": "12345",
+                "lockLocation": "Home",
+                "lockName": "Front Door",
+                "error": "Attempt to access without permission"
+            },
+            {
+                "dateTime": "2024-10-25T15:27:18",
+                "amount": null,
+                "lockId": "12345",
+                "lockLocation": "Home",
+                "lockName": "Front Door",
+                "error": "Authentication failed"
+            },
+            ]
+        }
+    '''
+
+    # connect to database
+    collection = db['Warning']
+    lockCollection = db['Locks']
+
+    # get all warning
+    warnings = list( collection.find( { 'userId': userId }, { '_id': 0 } ) )
+
+    # get warning in notificaton format
+    warningList = [
+        {
+            'dateTime': warning['datetime'],
+            'amount': None,
+            'lockId': warning['lockId'],
+            'lockLocation': lock['lockLocation'],
+            'lockName': lock['lockName'],
+            'error': warning['error'],
+        }
+        for warning in warnings
+        for lock in lockCollection.find( { 'lockId': warning['lockId'] }, { '_id': 0 } )
+    ]
+
+    # get dict of notification list
+    notificationList = {
+        'userId': userId,
+        'mode': 'warning',
+        'subMode': 'view',
+        'dataList': warningList
+    }
+
+    return notificationList
+
+# delete notification by notiId in interested lockid
+@app.delete('/notification/{notiId}/{lockId}', tags=['Notifications'])
+def delete_notification( notiId: str, lockId: int ):
+    '''
+        delete notification by notiId and lockId
+        input: notiId (str) and lockId (int)
+        output: dict of notification
+        for example:
+        {
+            "notiId": "req01",
+            "lockId": "12345",
+            "message": "Delete notification successfully"
+        }
+    '''
+
+    # connect to database
+    collection = db['Request']
+    lockCollection = db['Locks']
+
+    # delete notification by notiId
+    collection.delete_one( { 'reqId': notiId } )
+
+    # delete notification to lock
+    # NOTE: delete notification in request list of lock
+    lockCollection.update_one( { 'lockId': lockId }, { '$pull': { 'request': { 'reqId': notiId } } } )
+
+    return { 'notiId': notiId, 'lockId': lockId, 'message': 'Delete notification successfully' }
+
+# Ignore all risk attempt by delete warning by lockid
+@app.delete('/warning/ignore/{lockId}', tags=['Notifications'])
+def Ignore_all_risk_attempt( lockId: int ):
+    '''
+        Ignore all risk attempt by delete warning by lockId
+        input: lockId (int)
+        output: dict of warning
+        for example:
+        {
+            "lockId": "12345",
+            "message": "Ignore warning successfully"
+        }
+    '''
+
+    # connect to database
+    collection = db['Warning']
+    lockCollection = db['Locks']
+
+    # delete warning by warningId
+    collection.delete_one( { 'lockId': lockId } )
+
+    # delete warning to lock
+    # NOTE: delete warning in warning list of lock
+    lockCollection.update_one( { 'lockId': lockId }, { '$pull': { 'warning': { 'lockId': lockId } } } )
+
+    return { 'lockId': lockId, 'message': 'Ignore warning successfully' }
+
+# accept request 
+@app.put('/acceptRequest/{reqId}', tags=['Accept Request'])
+def accept_request( reqId: str ):
+    '''
+        accept request by update request status to accepted and 
+        add user to lock by append user to member role
+        add location to lock location list
+        input: reqId (str)
+        output: dict of request
+        for example:
+        {
+            "reqId": "req01",
+            "message": "Accept request successfully"
+        }
+    '''
+
+    # connect to database
+    collection = db['Request']
+    lockCollection = db['Locks']
+    userCollection = db['Users']
+
+    # get request by reqId
+    request = collection.find_one( { 'reqId': reqId }, { '_id': 0 } )
+    if not request:
+        raise HTTPException( status_code = 404, detail = "Request not found" )
+
+    # update request status to accepted
+    collection.update_one( { 'reqId': reqId }, { '$set': { 'requestStatus': 'accepted' } } )
+
+    # add user to lock
+    # NOTE: add user to lock by append user to guest role
+    lockCollection.update_one( { 'lockId': request['lockId'] }, { '$push': { 'roleToUserIdListDict.guest': request['userId'] } } )
+    userCollection.update_one( { 'userId': request['userId'] }, { '$push': { 'userRoleToLockIdListDict.guest': request['lockId'] } } )
+
+    # add location to lock location list in user
+    # NOTE: add location to lock location list
+    userCollection.update_one( { 'userId': request['userId'] }, { '$push': { 'lockLocationList': request['lockLocation'] } } )
+
+    return { 'reqId': reqId, 'message': 'Accept request successfully' }
