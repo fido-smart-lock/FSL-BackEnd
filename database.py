@@ -6,6 +6,7 @@
 from pydantic import BaseModel
 from typing import List, Dict
 from datetime import datetime
+from typing import Optional
 
 ##############################################################
 #
@@ -21,11 +22,11 @@ class User_Signup( BaseModel ):
 
 # class for history
 class History( BaseModel ):
-    id: int
+    hisId: str
     userId: str
-    lockId: int
-    lockStatus: str
-    time: datetime
+    lockId: str
+    status: str
+    datetime: datetime
 
 # class for request
 class Request( BaseModel ):
@@ -44,20 +45,19 @@ class NewRequest( BaseModel ):
 class NewInvitation( BaseModel ):
     srcUserId: str
     desUserId: str
-    userRole: str
+    role: str
     lockId: str
-    dateTime: datetime
+    datetime: Optional[datetime] = None
 
 # class for invitation
 class Invitation( BaseModel ):
-    id: str
-    userId: str
-    userCode : int
-    userRole: str
+    invId: str
+    srcUserId: str
+    desUserId: str
+    role: str
     lockId: str
-    lockLocation: str
-    time: datetime
-    expireTime: datetime
+    datetime: datetime
+    invStatus: str
 
 # class for connection
 class Connection( BaseModel ):
@@ -69,16 +69,17 @@ class Connection( BaseModel ):
 
 # class for other
 class Other( BaseModel ):
-    otherId: int
+    otherId: str
     subMode: str
+    amount: Optional[int] = None
     userId: str
-    userRole: str
+    userRole: Optional[str] = None
     lockId: str
     datetime: datetime
 
 # class for warning
 class Warning( BaseModel ):
-    warningId: int
+    warningId: str
     subMode: str
     userId: str
     userRole: str
@@ -102,39 +103,39 @@ class Notification( BaseModel ):
     lockLocation: str
     lockName: str
 
-# class for users role
-class UserRole( BaseModel ):
+# class for guest
+class Guest( BaseModel ):
     userId: str
-    userName: str
-    userImage: str
-    userRole: str
-    datetime: datetime
+    lockId: str
+    expireDatetime: datetime
 
 # class for new lock
 class NewLock( BaseModel ):
     userId: str
-    lockId: int
+    lockId: str
     lockName: str
     lockLocation: str
     lockImage: str
 
 # class for locks
 class Lock( BaseModel ):
-    lockId: int
+    lockId: str
     lockName: str
     lockImage: str
     lockStatus: str
     lockLocation: str
     securityStatus: str
-    roleToUserIdListDict: Dict[ str, List[ str ] ] # role : userIdList
-    invitation: List[ Invitation ]
-    request: List[ Request ]
-    history: List[ History ]
-    warning: List[ Warning ]
+    admin: List[ str ]
+    member: List[ str ]
+    guest: List[ Guest ]
+    invitation: List[ str ]
+    request: List[ str ]
+    history: List[ str ]
+    warning: List[ str ]
 
 # class for lock details
 class LockDetails( BaseModel ):
-    lockId: int
+    lockId: str
     lockName: str
     lockLocation: str
     lockImage: str
@@ -151,4 +152,6 @@ class User( BaseModel ):
     userId: str
     userCode: int
     lockLocationList: List[ str ]
-    userRoleToLockIdListDict: Dict[ str, List[ str ] ] # userRole: LockIdList
+    admin: List[ str ]
+    member: List[ str ]
+    guest: List[ Guest ]

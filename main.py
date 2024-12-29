@@ -7,7 +7,7 @@ import requests
 import os
 import hashlib, uuid
 from datetime import datetime
-from database import User, Lock, History, Request, UserRole, User_Signup, NewLock, NewRequest, NewInvitation, Invitation, Other
+from database import User, Lock, History, Request, User_Signup, NewLock, NewRequest, NewInvitation, Invitation, Other
 import random
 
 app = FastAPI()
@@ -21,7 +21,6 @@ MY_VARIABLE = os.getenv('MY_VARIABLE')
 #   Connect to MongoDB
 client = MongoClient(f"mongodb+srv://{user}:{password}@cluster0.o068s.mongodb.net/")
 db = client['Fido']
-# collection = db['Events']
 
 #   CORS
 origins = ['*']
@@ -132,8 +131,8 @@ def generate_request_id():
 
     return requestId
 
-# # generate invitation id
-# def generate_invitation_id():
+# generate invitation id
+def generate_invitation_id():
     '''
         Generate invitation id
         Input: None
@@ -144,12 +143,12 @@ def generate_request_id():
     collection = db['Invitation']
 
     # Generate invitation id
-    invitationId = 'IV' + str( collection.count_documents( {} ) + 1 ).zfill( 5 )
+    invitationId = 'invite' + str( collection.count_documents( {} ) + 1 ).zfill( 5 )
 
     number = 2
     #   Check if invitation id already exists
     while collection.find_one( { 'invitationId' : invitationId }, { '_id' : 0 } ):
-        invitationId = 'IV' + str( collection.count_documents( {} ) + number ).zfill( 5 )
+        invitationId = 'invite' + str( collection.count_documents( {} ) + number ).zfill( 5 )
         number += 1
 
     return invitationId
@@ -271,7 +270,7 @@ def login( email: str, password: str ):
 
 # get admin lock
 @app.get('/admin/lock/{lockId}', tags=['Create New Lock'])
-def get_admin_lock( lockId: int ):
+def get_admin_lock( lockId: str ):
     '''
         get all admin of this lock by lockId
         input: lockId (int)
@@ -318,7 +317,7 @@ def get_admin_lock( lockId: int ):
                 'userName': user['firstName'],
                 'userSurname': user['lastName'],
             }
-            for userId in lock['roleToUserIdListDict']['admin']
+            for userId in lock['admin']
             for user in userCollection.find( { 'userId': userId }, { '_id': 0 } )
         ]
     }
@@ -326,7 +325,7 @@ def get_admin_lock( lockId: int ):
     return adminLock
 
 # get list of lock location by userId
-@app.get('/lockList/user/{userId}', tags=['Locks List'])
+@app.get('/lockLocation/user/{userId}', tags=['Locks List'])
 def get_lock_location( userId: str ):
     '''
         get list of lock location by userId
@@ -360,7 +359,7 @@ def get_lock_location( userId: str ):
 # NOTE: if lockLocationActiveStr is None, set path to /lockList/{userId}/None
 @app.get('/lockList/{userId}', tags=['Locks List'])
 @app.get('/lockList/{userId}/{lockLocationActiveStr}', tags=['Locks List'])
-def get_user_lock(userId: str, lockLocationActiveStr: str = None):
+def get_user_lock( userId: str, lockLocationActiveStr: str = None):
     '''
         get all user lock
         input: userId (str)
@@ -404,9 +403,23 @@ def get_user_lock(userId: str, lockLocationActiveStr: str = None):
 
     dataList = list()
 
-    for lockIdList in user['userRoleToLockListDict'].values():
-        for lockId in lockIdList:
-            lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+    # get lock of this lock location active
+    # loop for admin and member
+    for lockId in user['admin']+user['member']:
+        lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+        if lock:
+            if lockLocationActiveStr == lock['lockLocation']:
+                dataList.append( {
+                    'lockId': lock['lockId'],
+                    'lockImage': lock['lockImage'],
+                    'lockName': lock['lockName'],
+                } )
+
+    # loop for guest
+    for guest in user['guest']:
+        lockId = guest['lockId']
+        lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+        if lock:
             if lockLocationActiveStr == lock['lockLocation']:
                 dataList.append( {
                     'lockId': lock['lockId'],
@@ -426,7 +439,7 @@ def get_user_lock(userId: str, lockLocationActiveStr: str = None):
 
 # get lock detail by lockId
 @app.get('/lockDetail/{lockId}/{userId}', tags=['Locks Detail'])
-def get_lock_detail( lockId: int, userId: str ):
+def get_lock_detail( lockId: str, userId: str ):
     '''
         get lock detail by lockId
         input: lockId (int) and userId (str)
@@ -441,16 +454,16 @@ def get_lock_detail( lockId: int, userId: str ):
             "isAdmin": true,
             "dataList": [
                 {
-                "userId": "js8974",
-                "userName": "Jonathan",
-                "userImage": "jonathan.jpg",
-                "role": "admin"
+                    "userId": "js8974",
+                    "userName": "Jonathan",
+                    "userImage": "jonathan.jpg",
+                    "role": "admin"
                 },
                 {
-                "userId": "tw7634",
-                "userName": "Taylor",
-                "userImage": "jonathan.jpg",
-                "role": "member"
+                    "userId": "tw7634",
+                    "userName": "Taylor",
+                    "userImage": "jonathan.jpg",
+                    "role": "member"
                 },
             ]
         }
@@ -465,25 +478,50 @@ def get_lock_detail( lockId: int, userId: str ):
     if not lock:
         raise HTTPException( status_code = 404, detail = "Lock not found" )
     
+    # if user is not in lock
+    if userId not in lock['admin'] and userId not in lock['member'] and not any(guest["userId"] == userId for guest in lock['guest']):
+        raise HTTPException( status_code = 403, detail = "User is not in lock" )
+    
     # check if user is admin then set isAdmin to True
     isAdmin = False
-    for role, userIdList in lock['roleToUserIdListDict'].items():
-        if userId in userIdList and role == 'admin':
-            isAdmin = True
+    if userId in lock['admin']:
+        isAdmin = True
 
     dataList = list()
 
-    for userIdList in lock['roleToUserIdListDict'].values:
-        for userId in userIdList:
-            user = userCollection.find_one( { 'userId': userId }, { '_id': 0 } )
+    # loop for get admin user
+    for userIdStr in lock['admin']:
+        user = userCollection.find_one( { 'userId': userIdStr }, { '_id': 0 } )
+        if user:
             dataList.append( {
                 'userId': user['userId'],
                 'userName': user['firstName'],
                 'userImage': user['userImage'],
-                'role': user['userRole'],
+                'role': 'admin'
             } )
-        
 
+    # loop for get member user
+    for userIdStr in lock['member']:
+        user = userCollection.find_one( { 'userId': userIdStr }, { '_id': 0 } )
+        if user:
+            dataList.append( {
+                'userId': user['userId'],
+                'userName': user['firstName'],
+                'userImage': user['userImage'],
+                'role': 'member'
+            } )
+
+    # loop for get guest user
+    for guest in lock['guest']:
+        user = userCollection.find_one( { 'userId': guest['userId'] }, { '_id': 0 } )
+        if user:
+            dataList.append( {
+                'userId': user['userId'],
+                'userName': user['firstName'],
+                'userImage': user['userImage'],
+                'role': 'guest',
+            } )
+    
     # get dict of lock detail
     lockDetail = {
         'lockId': lock['lockId'],
@@ -500,7 +538,7 @@ def get_lock_detail( lockId: int, userId: str ):
 # get user of this lock by lockId and interested role
 # userId???
 @app.get('/lock/role/{lockId}/{role}', tags=['Role Setting'])
-def get_user_by_lockId_role( lockId: int, role: str ):
+def get_user_by_lockId_role( lockId: str, role: str ):
     '''
         get user of this lock by lockId and interested role
         input: lockId (int) and role (str)
@@ -535,16 +573,22 @@ def get_user_by_lockId_role( lockId: int, role: str ):
     dataList = list()
 
     # get user of lock by role
-    for userIdList in lock['roleToUserIdListDict'][role]:
-        for userId in userIdList:
-            user = userCollection.find_one( { 'userId': userId }, { '_id': 0 } )
+    for userIdStr in lock[role]:
+        if role == 'guest':
+            guest = userIdStr
+            user = userCollection.find_one( { 'userId': guest['userId'] }, { '_id': 0 } )
+            datetime = guest['expirationDatetime']
+        else:
+            user = userCollection.find_one( { 'userId': userIdStr }, { '_id': 0 } )
+            datetime = None
+        if user:
             dataList.append( {
                 'userId': user['userId'],
                 'userName': user['firstName'],
                 'userSurname': user['lastName'],
                 'userImage': user['userImage'],
-                'role': user['userRole'],
-                'dateTime': user['datetime'],
+                'role': role,
+                'dateTime': datetime
             } )
 
     # get dict of user by role
@@ -605,7 +649,7 @@ def get_user_by_userCode( userCode: int ):
 
 # get history by lockId
 @app.get('/history/{lockId}', tags=['History'])
-def get_history_by_lockId( lockId: int ):
+def get_history_by_lockId( lockId: str ):
     '''
         get history by lockId
         input: lockId (int)
@@ -664,6 +708,7 @@ def get_history_by_lockId( lockId: int ):
 
     # connect to database
     collection = db['Locks']
+    userCollection = db['Users']
 
     # get lock
     lock = collection.find_one( { 'lockId': lockId }, { '_id': 0 } )
@@ -675,7 +720,16 @@ def get_history_by_lockId( lockId: int ):
         'lockId': lock['lockId'],
         'lockName': lock['lockName'],
         'lockLocation': lock['lockLocation'],
-        'dataList': lock['history']
+        'dataList': [
+            {
+                'userImage': user['userImage'] if user else None,
+                'dateTime': history['datetime'],
+                'userName': user['firstName'] + ' ' + user['lastName'] if user else None,
+                'status': history['status']
+            }
+            for history in lock['history']
+            for user in userCollection.find( { 'userId': history['userId'] }, { '_id': 0 } )
+        ]
     }
 
     return historyByLockId
@@ -695,6 +749,11 @@ def post_new_lock( new_lock: NewLock ):
             "message": "Create new lock successfully"
         }
     '''
+
+    # connect to database
+    collection = db['Locks']
+    userCollection = db['Users']
+
     # if lock is already exists
     if collection.find_one( { 'lockId': new_lock.lockId } ):
         raise HTTPException( status_code = 400, detail = "Lock already exists" )
@@ -702,10 +761,6 @@ def post_new_lock( new_lock: NewLock ):
     # if user is already have this lockId
     if userCollection.find_one( { 'userId': new_lock.userId, 'userRoleToLockIdListDict.admin': new_lock.lockId } ):
         raise HTTPException( status_code = 400, detail = "User already have this lock" )
-
-    # connect to database
-    collection = db['Locks']
-    userCollection = db['Users']
 
     # create new lock
     newLock = Lock(
@@ -715,10 +770,9 @@ def post_new_lock( new_lock: NewLock ):
         lockImage = new_lock.lockImage,
         lockStatus = 'secure',
         securityStatus = 'secure',
-        roleToUserIdListDict = {
-            'admin': [ new_lock.userId ],
-            'member': [],
-        },
+        admin = [ new_lock.userId ],
+        member = [],
+        guest = [],
         invitation = [],
         request = [],
         history = [],
@@ -732,9 +786,8 @@ def post_new_lock( new_lock: NewLock ):
     # NOTE: add new lock location to lock location list
     userCollection.update_one( { 'userId': new_lock.userId }, { '$push': { 'lockLocationList': new_lock.lockLocation } } )
     
-    # update user role to lock id list dict
-    # NOTE: add new lock to admin role by append new lock id to admin list
-    userCollection.update_one( { 'userId': new_lock.userId }, { '$push': { 'userRoleToLockIdListDict.admin': new_lock.lockId } } )
+    # add new lock to admin by append new lock id to list
+    userCollection.update_one( { 'userId': new_lock.userId }, { '$push': { 'admin': new_lock.lockId } })
 
     return { 'userId': new_lock.userId, 'lockId': new_lock.lockId, 'message': 'Create new lock successfully' }
 
@@ -764,12 +817,15 @@ def post_new_request( new_request: NewRequest ):
     if collection.find_one( { 'lockId': new_request.lockId, 'userId': new_request.userId } ):
         raise HTTPException( status_code = 400, detail = "Request already exists" )
 
+    # generate request id
+    requestId = generate_request_id()
+
     # create new request
     newRequest = Request(
-        reqId = generate_request_id(),
+        reqId = requestId,
         lockId = new_request.lockId,
         userId = new_request.userId,
-        requestStatus = new_request.requestStatus,
+        requestStatus = 'sent',
         datetime = datetime.now(),
     )
 
@@ -778,13 +834,14 @@ def post_new_request( new_request: NewRequest ):
 
     # update request to lock
     # NOTE: add new request to lock by append new request to request list
-    lockCollection.update_one( { 'lockId': new_request.lockId }, { '$push': { 'request': newRequest.dict() } } )
+    lockCollection.update_one( { 'lockId': new_request.lockId }, { '$push': { 'request': requestId } } )
 
     # create new other
     # NOTE: create new other with subMode = sent
     newOther = Other(
         otherId = generate_other_id(),
         subMode = 'sent',
+        amount = None,
         userId = new_request.userId,
         userRole = None,
         lockId = new_request.lockId,
@@ -802,44 +859,71 @@ def post_new_invitation( new_invitation: NewInvitation ):
     '''
         post new invitation to Invitation format
         post new invitation to lock
+        post new invitation to other
         input: Invitation
         output: dict of new invitation
         for example:
         {
-            "lockId": "12345",
-            "userId": "tw8769",
+            "srcUserId": "js7694",
+            "desUserId": "tw8769",
+            "role": "member",
+            "dateTime": null,
             "message": "Send invitation successfully"
         }
     '''
 
     # connect to database
-    collection = db['Other']
+    otherCollection = db['Other']
     lockCollection = db['Locks']
+    inviteCollection = db['Invitation']
+
+    # if invitation is already exists
+    if inviteCollection.find_one( { 'srcUserId': new_invitation.srcUserId, 'desUserId': new_invitation.desUserId, 'lockId': new_invitation.lockId } ):
+        raise HTTPException( status_code = 400, detail = "Invitation already exists" )
+
+    # generate invitation id
+    invitationId = generate_invitation_id()
 
     # create new invitation
     newInvitation = Invitation(
-        invitationId = generate_other_id(),
+        invId = invitationId,
+        srcUserId = new_invitation.srcUserId,
+        desUserId = new_invitation.desUserId,
+        role = new_invitation.role,
         lockId = new_invitation.lockId,
-        userId = new_invitation.userId,
-        invitationStatus = new_invitation.invitationStatus,
-        invitationDateTime = datetime.now(),
+        invStatus = 'invite',
+        datetime = new_invitation.datetime if new_invitation.datetime else datetime.now(),
     )
 
     # add new invitation to database
-    collection.insert_one( newInvitation.dict() )
+    inviteCollection.insert_one( newInvitation.dict() )
 
     # update invitation to lock
-    # NOTE: add new invitation to lock by append new invitation to invitation list
-    lockCollection.update_one( { 'lockId': new_invitation.lockId }, { '$push': { 'invitation': newInvitation.dict() } } )
+    # NOTE: add new invitation to lock by append invitation id to invitation list
+    lockCollection.update_one( { 'lockId': new_invitation.lockId }, { '$push': { 'invitation': invitationId } } )
 
-    return { 'lockId': new_invitation.lockId, 'userId': new_invitation.userId, 'message': 'Send invitation successfully' }
+    # create new other
+    # NOTE: create new other with subMode = invite
+    newOther = Other(
+        otherId = generate_other_id(),
+        subMode = 'invite',
+        amount = None,
+        userId = new_invitation.desUserId,
+        userRole = new_invitation.role,
+        lockId = new_invitation.lockId,
+        datetime = new_invitation.datetime if new_invitation.datetime else datetime.now(),
+    )
+
+    # add new other to database
+    otherCollection.insert_one( newOther.dict() )
+
+    return { 'srcUserId': new_invitation.srcUserId, 'desUserId': new_invitation.desUserId, 'role': new_invitation.role, 'dateTime': new_invitation.datetime, 'message': 'Send invitation successfully' }
     
 # post lock location
-@app.post('/lockLocation/{userId}', tags=['Locks Setting'])
-def post_lock_location( userId: str, lockLocation: str ):
+@app.post('/lockLocation/{userId}/{lockLocationStr}', tags=['Locks Setting'])
+def post_lock_location( userId: str, lockLocationStr: str ):
     '''
-        post lock location to User format
-        and append lock location to lock location list
+        post lock location to lock location list of user
         input: userId (str) and lockLocation (str)
         output: dict of lock location
         for example:
@@ -853,8 +937,12 @@ def post_lock_location( userId: str, lockLocation: str ):
     # connect to database
     collection = db['Users']
 
+    # if lock location is already exists
+    if collection.find_one( { 'userId': userId, 'lockLocationList': lockLocationStr } ):
+        raise HTTPException( status_code = 400, detail = "Lock location already exists" )
+
     # update lock location
-    collection.update_one( { 'userId': userId }, { '$push': { 'lockLocationList': lockLocation } } )
+    collection.update_one( { 'userId': userId }, { '$push': { 'lockLocationList': lockLocationStr } } )
 
     return { 'userId': userId, 'message': 'Update lock location successfully' }
 
@@ -1272,7 +1360,7 @@ def get_warning_view_notification_list( userId: str ):
 
 # delete notification by notiId in interested lockid
 @app.delete('/notification/{notiId}/{lockId}', tags=['Notifications'])
-def delete_notification( notiId: str, lockId: int ):
+def delete_notification( notiId: str, lockId: str ):
     '''
         delete notification by notiId and lockId
         input: notiId (str) and lockId (int)
@@ -1300,7 +1388,7 @@ def delete_notification( notiId: str, lockId: int ):
 
 # Ignore all risk attempt by delete warning by lockid
 @app.delete('/warning/ignore/{lockId}', tags=['Notifications'])
-def Ignore_all_risk_attempt( lockId: int ):
+def Ignore_all_risk_attempt( lockId: str ):
     '''
         Ignore all risk attempt by delete warning by lockId
         input: lockId (int)
