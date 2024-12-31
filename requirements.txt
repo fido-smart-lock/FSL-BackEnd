@@ -1,3 +1,11 @@
 fastapi
 uvicorn
 pymongo
+dotenv
+typing
+os
+hashlib
+uuid
+datetime
+api.database
+random
