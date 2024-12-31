@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 pymongo
-dotenv
+python-dotenv
 typing
 os
 hashlib
