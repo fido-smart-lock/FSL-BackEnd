@@ -1,11 +1,4 @@
-fastapi
-uvicorn
-pymongo
-python-dotenv
-typing
-os
-hashlib
-uuid
-datetime
-api.database
-random
+fastapi==0.81.0
+uvicorn==0.18.3
+pymongo==4.3.3
+python-dotenv==0.20.0
