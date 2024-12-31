@@ -7,7 +7,7 @@ import requests
 import os
 import hashlib, uuid
 from datetime import datetime
-from database import User, Lock, History, Request, User_Signup, NewLock, NewRequest, NewInvitation, Invitation, Other
+from api.database import User, Lock, History, Request, User_Signup, NewLock, NewRequest, NewInvitation, Invitation, Other
 import random
 
 app = FastAPI()
@@ -197,6 +197,50 @@ def generate_other_id():
 
     return otherId
 
+# generate warning id
+def generate_warning_id():
+    '''
+        Generate warning id
+        Input: None
+        Output: warning id (str)
+    '''
+
+    # Connect to database
+    collection = db['Warning']
+
+    # Generate warning id
+    warningId = 'warning' + str( collection.count_documents( {} ) + 1 ).zfill( 5 )
+
+    number = 2
+    #   Check if warning id already exists
+    while collection.find_one( { 'warningId' : warningId }, { '_id' : 0 } ):
+        warningId = 'warning' + str( collection.count_documents( {} ) + number ).zfill( 5 )
+        number += 1
+
+    return warningId
+
+# generate history id
+def generate_history_id():
+    '''
+        Generate history id
+        Input: None
+        Output: history id (str)
+    '''
+
+    # Connect to database
+    collection = db['History']
+
+    # Generate history id
+    historyId = 'his' + str( collection.count_documents( {} ) + 1 ).zfill( 5 )
+
+    number = 2
+    #   Check if history id already exists
+    while collection.find_one( { 'historyId' : historyId }, { '_id' : 0 } ):
+        historyId = 'his' + str( collection.count_documents( {} ) + number ).zfill( 5 )
+        number += 1
+
+    return historyId
+
 ##################################################
 #
 #   API
@@ -355,8 +399,7 @@ def get_lock_location( userId: str ):
     return lockLocation
 
 # get user lock by userId
-# NOTE: if lockLocationActiveStr is None, set lockLocationActiveStr to first element of lockLocationList
-# NOTE: if lockLocationActiveStr is None, set path to /lockList/{userId}/None
+# NOTE: if lockLocationActiveStr is None, lockLocationActiveStr = lockLocationList[0] and set path to /lockList/{userId}
 @app.get('/lockList/{userId}', tags=['Locks List'])
 @app.get('/lockList/{userId}/{lockLocationActiveStr}', tags=['Locks List'])
 def get_user_lock( userId: str, lockLocationActiveStr: str = None):
@@ -709,27 +752,32 @@ def get_history_by_lockId( lockId: str ):
     # connect to database
     collection = db['Locks']
     userCollection = db['Users']
+    historyCollection = db['History']
 
     # get lock
     lock = collection.find_one( { 'lockId': lockId }, { '_id': 0 } )
     if not lock:
         raise HTTPException( status_code = 404, detail = "Lock not found" )
     
+    # get history by lockId
+    dataList = list()
+    for historyId in lock['history']:
+        history = historyCollection.find_one( { 'hisId': historyId }, { '_id': 0 } )
+        if history:
+            user = userCollection.find_one( { 'userId': history['userId'] }, { '_id': 0 } )
+            dataList.append( {
+                'userImage': user['userImage'],
+                'dateTime': history['datetime'],
+                'userName': user['firstName'] + ' ' + user['lastName'],
+                'status': history['status'],
+            } )
+    
     # get dict of history by lockId
     historyByLockId = {
         'lockId': lock['lockId'],
         'lockName': lock['lockName'],
         'lockLocation': lock['lockLocation'],
-        'dataList': [
-            {
-                'userImage': user['userImage'] if user else None,
-                'dateTime': history['datetime'],
-                'userName': user['firstName'] + ' ' + user['lastName'] if user else None,
-                'status': history['status']
-            }
-            for history in lock['history']
-            for user in userCollection.find( { 'userId': history['userId'] }, { '_id': 0 } )
-        ]
+        'dataList': dataList
     }
 
     return historyByLockId
@@ -753,14 +801,10 @@ def post_new_lock( new_lock: NewLock ):
     # connect to database
     collection = db['Locks']
     userCollection = db['Users']
-
-    # if lock is already exists
-    if collection.find_one( { 'lockId': new_lock.lockId } ):
-        raise HTTPException( status_code = 400, detail = "Lock already exists" )
     
-    # if user is already have this lockId
-    if userCollection.find_one( { 'userId': new_lock.userId, 'userRoleToLockIdListDict.admin': new_lock.lockId } ):
-        raise HTTPException( status_code = 400, detail = "User already have this lock" )
+    # if user is already have this lockId and return message error
+    if userCollection.find_one( { 'userId': new_lock.userId, 'admin': { '$in': [new_lock.lockId] } } ):
+        raise HTTPException( status_code = 400, detail = "Lock ID Already Exists" )
 
     # create new lock
     newLock = Lock(
@@ -798,6 +842,8 @@ def post_new_request( new_request: NewRequest ):
         post new request to Request format
         post new request to lock
         post send request to Other( subMode = sent )
+        post send request to History
+        post history to lock
         input: NewRequest
         output: dict of new request
         for example:
@@ -812,6 +858,7 @@ def post_new_request( new_request: NewRequest ):
     collection = db['Request']
     lockCollection = db['Locks']
     otherCollection = db['Other']
+    historyCollection = db['History']
 
     # if request is already exists
     if collection.find_one( { 'lockId': new_request.lockId, 'userId': new_request.userId } ):
@@ -850,6 +897,26 @@ def post_new_request( new_request: NewRequest ):
 
     # add new other to database
     otherCollection.insert_one( newOther.dict() )
+
+    # generate new history id
+    historyId = generate_history_id()
+
+    # create new history
+    # NOTE: create new history with status = req
+    newHistory = History(
+        hisId = historyId,
+        userId = new_request.userId,
+        lockId = new_request.lockId,
+        status = 'req',
+        datetime = datetime.now(),
+    )
+
+    # add new history to database
+    historyCollection.insert_one( newHistory.dict() )
+
+    # post history to lock
+    # NOTE: add new history to lock by append new history to history list
+    lockCollection.update_one( { 'lockId': new_request.lockId }, { '$push': { 'history': historyId } } )
 
     return { 'lockId': new_request.lockId, 'userId': new_request.userId, 'message': 'Send request successfully' }
 
@@ -947,7 +1014,7 @@ def post_lock_location( userId: str, lockLocationStr: str ):
     return { 'userId': userId, 'message': 'Update lock location successfully' }
 
 # get notofication request mode list by userId
-@app.get('/notification/request/{userId}', tags=['Notifications'])
+@app.get('/notification/req/{userId}', tags=['Notifications'])
 def get_request_notification_list( userId: str ):
     '''
         get request list in notification format by userId and order by date time
@@ -1027,27 +1094,36 @@ def get_request_notification_list( userId: str ):
     userCollection = db['Users']
     lockCollection = db['Locks']
 
-    # get all request
-    requests = list( collection.find( { 'userId': userId }, { '_id': 0 } ) )
+    # get user
+    user = userCollection.find_one( { 'userId': userId }, { '_id': 0 } )
 
-    # get request in notificaton format
-    requestList = [
-        {
-            'notiId': request['reqId'],
-            'dateTime': request['datetime'],
-            'subMode': None,
-            'amount': len( lock['request'] ),
-            'lockId': request['lockId'],
-            'lockLocation': lock['lockLocation'],
-            'lockName': lock['lockName'],
-            'userName': user['firstName'],
-            'userSurname': user['lastName'],
-            'role': None,
-        }
-        for request in requests
-        for user in userCollection.find( { 'userId': request['userId'] }, { '_id': 0 } )
-        for lock in lockCollection.find( { 'lockId': request['lockId'] }, { '_id': 0 } )
-    ]
+    # get lockId list that user is admin
+    lockIdList = user['admin']
+
+    requestList = list()
+
+    # get request in notification format
+    for lockId in lockIdList:
+        requests = list( collection.find( { 'lockId': lockId }, { '_id': 0 } ) )
+        lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+        for request in requests:
+            requestList.append(
+                {
+                    'notiId': request['reqId'],
+                    'dateTime': request['datetime'],
+                    'subMode': None,
+                    'amount': len( lock['request'] ),
+                    'lockId': lockId,
+                    'lockLocation': lock['lockLocation'],
+                    'lockName': lock['lockName'],
+                    'userName': user['firstName'],
+                    'userSurname': user['lastName'],
+                    'role': None,
+                }
+            )
+
+    # order by date time
+    requestList = sorted( requestList, key = lambda x: x['dateTime'], reverse = True )
 
     # get dict of notification list
     notificationList = {
@@ -1058,8 +1134,8 @@ def get_request_notification_list( userId: str ):
 
     return notificationList
 
-# get notification connection mode list by userId
-app.get('/notification/connection/{userId}', tags=['Notifications'])
+# get notification connect mode list by userId
+app.get('/notification/connect/{userId}', tags=['Notifications'])
 def get_connect_notification_list( userId: str ):
     '''
         get connect list in notification format by userId and order by date time
@@ -1111,31 +1187,40 @@ def get_connect_notification_list( userId: str ):
     '''
 
     # connect to database
-    collection = db['Connect']
+    conCollection = db['Connect']
     userCollection = db['Users']
     lockCollection = db['Locks']
 
-    # get all connect
-    connects = list( collection.find( { 'userId': userId }, { '_id': 0 } ) )
+    # get user
+    user = userCollection.find_one( { 'userId': userId }, { '_id': 0 } )
 
-    # get connect in notificaton format
-    connectList = [
-        {
-            'notiId': connect['connectId'],
-            'dateTime': connect['datetime'],
-            'subMode': None,
-            'amount': None,
-            'lockId': connect['lockId'],
-            'lockLocation': lock['lockLocation'],
-            'lockName': lock['lockName'],
-            'userName': user['firstName'],
-            'userSurname': user['lastName'],
-            'role': None,
-        }
-        for connect in connects
-        for user in userCollection.find( { 'userId': connect['userId'] }, { '_id': 0 } )
-        for lock in lockCollection.find( { 'lockId': connect['lockId'] }, { '_id': 0 } )
-    ]
+    # get lockId list that user is admin
+    lockIdList = user['admin']
+
+    connectList = list()
+
+    # get request in notification format
+    for lockId in lockIdList:
+        connects = list( conCollection.find( { 'lockId': lockId }, { '_id': 0 } ) )
+        lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+        for connect in connects:
+            connectList.append(
+                {
+                    'notiId': connect['reqId'],
+                    'dateTime': connect['datetime'],
+                    'subMode': None,
+                    'amount': None,
+                    'lockId': lockId,
+                    'lockLocation': lock['lockLocation'],
+                    'lockName': lock['lockName'],
+                    'userName': user['firstName'],
+                    'userSurname': user['lastName'],
+                    'role': None,
+                }
+            )
+
+    # order by date time
+    connectList = sorted( connectList, key = lambda x: x['dateTime'], reverse = True )
 
     # get dict of notification list
     notificationList = {
@@ -1146,11 +1231,11 @@ def get_connect_notification_list( userId: str ):
 
     return notificationList
 
-# # get notification other mode list by userId
-# @app.get('/notification/other/{userId}', tags=['Notifications'])
-# def get_other_notification_list( userId: str ):
+# get notification(mode = other and submode = invite) list by userId
+@app.get('/notification/other/invite/{userId}', tags=['Notifications'])
+def get_other_invite_notification_list( userId: str ):
     '''
-        get other list in notification format by userId and order by date time
+        get other list (mode = other and submode = invite) in notification format by userId and order by date time
         input: userId (str)
         output: dict of notification list
         for example of other mode:
@@ -1171,30 +1256,6 @@ def get_connect_notification_list( userId: str ):
                 "role": "admin"
             },
             {
-                "notiId": "other02",
-                "dateTime": "2024-10-25T16:15:50",
-                "subMode": "sent",
-                "amount": null,
-                "lockId": "67890",
-                "lockLocation": "Home",
-                "lockName": "Garage",
-                "userName": "",
-                "userSurname": ""
-                "role": ""
-            },
-            {
-                "notiId": "other03",
-                "dateTime": "2024-10-25T14:10:05",
-                "subMode": "accepted",
-                "amount": null,
-                "lockId": "89046",
-                "lockLocation": "Office",
-                "lockName": "Office Door",
-                "userName": "",
-                "userSurname": "",
-                "role": ""
-            },
-            {
                 "notiId": "other04",
                 "dateTime": "2024-10-25T12:05:35",
                 "subMode": "invite",
@@ -1205,6 +1266,66 @@ def get_connect_notification_list( userId: str ):
                 "userName": "Ella",
                 "userSurname": "Brown",
                 "role": "member"
+            },
+        ]
+    }
+    '''
+
+    # connect to database
+    otherCollection = db['Other']
+    lockCollection = db['Locks']
+    userCollection = db['Users']
+
+    # get submode = sent
+    others = list( otherCollection.find( { 'userId': userId, 'subMode': 'invite' }, { '_id': 0 } ) )
+
+    notificationList = {
+        'userId': userId,
+        'mode': 'other',
+        'dataList': [
+            {
+                'notiId': other['otherId'],
+                'dateTime': other['datetime'],
+                'subMode': 'invite',
+                'amount': None,
+                'lockId': other['lockId'],
+                'lockLocation': lock['lockLocation'],
+                'lockName': lock['lockName'],
+                'userName': user['firstName'],
+                'userSurname': user['lastName'],
+                'role': other['userRole'],
+            }
+            for other in others
+            for lock in lockCollection.find( { 'lockId': other['lockId'] }, { '_id': 0 } )
+            for user in userCollection.find( { 'userId': other['userId'] }, { '_id': 0 } )
+        ]
+    }
+
+    return notificationList
+
+# get notification(mode = other and submode = sent) list by userId
+@app.get('/notification/other/sent/{userId}', tags=['Notifications'])
+def get_other_sent_notification_list( userId: str ):
+    '''
+        get other list (mode = other and submode = sent) in notification format by userId and order by date time
+        input: userId (str)
+        output: dict of notification list
+        for example of other mode:
+        {
+            "userId": "js8974",
+            "mode": "other",
+            "dataList": [
+            {
+                "notiId": "other02",
+                "dateTime": "2024-10-25T16:15:50",
+                "subMode": "sent",
+                "amount": null,
+                "lockId": "67890",
+                "lockLocation": "Home",
+                "lockName": "Garage",
+                "userName": "",
+                "userSurname": ""
+                "role": ""
             },
             {
                 "notiId": "other05",
@@ -1219,14 +1340,102 @@ def get_connect_notification_list( userId: str ):
                 "role": ""
             }
         ]
-        }
+    }
     '''
 
-# get notification warning mode list by userId
-@app.get('/notification/warning/view/{userId}', tags=['Notifications'])
+    # connect to database
+    otherCollection = db['Other']
+    lockCollection = db['Locks']
+
+    # get submode = sent
+    others = list( otherCollection.find( { 'userId': userId, 'subMode': 'sent' }, { '_id': 0 } ) )
+
+    notificationList = {
+        'userId': userId,
+        'mode': 'other',
+        'dataList': [
+            {
+                'notiId': other['otherId'],
+                'dateTime': other['datetime'],
+                'subMode': 'sent',
+                'amount': None,
+                'lockId': other['lockId'],
+                'lockLocation': lock['lockLocation'],
+                'lockName': lock['lockName'],
+                'userName': None,
+                'userSurname': None,
+                'role': None,
+            }
+            for other in others
+            for lock in lockCollection.find( { 'lockId': other['lockId'] }, { '_id': 0 } )
+        ]
+    }
+
+    return notificationList
+
+# get notification(mode = other and submode = accepted) list by userId
+@app.get('/notification/other/accepted/{userId}', tags=['Notifications'])
+def get_other_accepted_notification_list( userId: str ):
+    '''
+        get other list (mode = other and submode = accepted) in notification format by userId and order by date time
+        input: userId (str)
+        output: dict of notification list
+        for example of other mode:
+        {
+            "userId": "js8974",
+            "mode": "other",
+            "dataList": [
+            {
+                "notiId": "other03",
+                "dateTime": "2024-10-25T14:10:05",
+                "subMode": "accepted",
+                "amount": null,
+                "lockId": "89046",
+                "lockLocation": "Office",
+                "lockName": "Office Door",
+                "userName": "",
+                "userSurname": "",
+                "role": ""
+            }
+        ]
+    }
+    '''
+
+    # connect to database
+    otherCollection = db['Other']
+    lockCollection = db['Locks']
+
+    # get submode = sent
+    others = list( otherCollection.find( { 'userId': userId, 'subMode': 'accepted' }, { '_id': 0 } ) )
+
+    notificationList = {
+        'userId': userId,
+        'mode': 'other',
+        'dataList': [
+            {
+                'notiId': other['otherId'],
+                'dateTime': other['datetime'],
+                'subMode': 'accepted',
+                'amount': None,
+                'lockId': other['lockId'],
+                'lockLocation': lock['lockLocation'],
+                'lockName': lock['lockName'],
+                'userName': None,
+                'userSurname': None,
+                'role': None,
+            }
+            for other in others
+            for lock in lockCollection.find( { 'lockId': other['lockId'] }, { '_id': 0 } )
+        ]
+    }
+
+    return notificationList
+
+# get notification(mode = warning and submode = main) list by userId
+@app.get('/notification/warning/main/{userId}', tags=['Notifications'])
 def get_warning_main_notification_list( userId: str ):
     '''
-        get warning list in notification format by userId and order by date time
+        get warning list(mode = warning and submode = main) in notification format by userId and order by datetime
         input: userId (str)
         output: dict of notification list
         for example of warning mode:
@@ -1264,41 +1473,51 @@ def get_warning_main_notification_list( userId: str ):
     '''
 
     # connect to database
-    collection = db['Warning']
+    warningCollection = db['Warning']
     lockCollection = db['Locks']
+    userCollection = db['Users']
 
-    # get all warning
-    warnings = list( collection.find( { 'userId': userId }, { '_id': 0 } ) )
+     # get user
+    user = userCollection.find_one( { 'userId': userId }, { '_id': 0 } )
 
-    # get warning in notificaton format
-    warningList = [
-        {
-            'dateTime': warning['datetime'],
-            'amount': len( lock['warning'] ),
-            'lockId': warning['lockId'],
-            'lockLocation': lock['lockLocation'],
-            'lockName': lock['lockName'],
-            'error': warning['error'],
-        }
-        for warning in warnings
-        for lock in lockCollection.find( { 'lockId': warning['lockId'] }, { '_id': 0 } )
-    ]
+    # get lockId list that user is admin
+    lockIdList = user['admin']
+
+    warningList = list()
+
+    # get request in notification format
+    for lockId in lockIdList:
+        lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+        latestWarning = warningCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+        warningList.append(
+            {
+                'dateTime': latestWarning['datetime'],
+                'amount': len( lock['warning'] ),
+                'lockId': lockId,
+                'lockLocation': lock['lockLocation'],
+                'lockName': lock['lockName'],
+                'error': None,
+            }
+        )
+
+    # order by date time
+    warningList = sorted( warningList, key = lambda x: x['dateTime'], reverse = True )
 
     # get dict of notification list
     notificationList = {
         'userId': userId,
         'mode': 'warning',
         'subMode': 'main',
-        'dataList': warningList
+        'dataList': notificationList
     }
 
     return notificationList
 
-# get notification warning mode list by userId 
+# get notification(mode = warning and submode = view) list by userId 
 @app.get('/notification/warning/view/{userId}', tags=['Notifications'])
 def get_warning_view_notification_list( userId: str ):
     '''
-        get warning list in notification format by userId and order by date time
+        get warning list(mode = warning and submode = view) in notification format by userId and order by date time
         input: userId (str)
         output: dict of notification list
         for example of warning mode:
@@ -1328,25 +1547,33 @@ def get_warning_view_notification_list( userId: str ):
     '''
 
     # connect to database
-    collection = db['Warning']
+    warningCollection = db['Warning']
     lockCollection = db['Locks']
+    userCollection = db['Users']
 
-    # get all warning
-    warnings = list( collection.find( { 'userId': userId }, { '_id': 0 } ) )
+    # get user
+    user = userCollection.find_one( { 'userId': userId }, { '_id': 0 } )
 
-    # get warning in notificaton format
-    warningList = [
-        {
-            'dateTime': warning['datetime'],
-            'amount': None,
-            'lockId': warning['lockId'],
-            'lockLocation': lock['lockLocation'],
-            'lockName': lock['lockName'],
-            'error': warning['error'],
-        }
-        for warning in warnings
-        for lock in lockCollection.find( { 'lockId': warning['lockId'] }, { '_id': 0 } )
-    ]
+    # get lockId list that user is admin
+    lockIdList = user['admin']
+
+    warningList = list()
+
+    # get warning in notification format
+    for lockId in lockIdList:
+        lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+        warnings = list( warningCollection.find( { 'lockId': lockId }, { '_id': 0 } ) )
+        for warning in warnings:
+            warningList.append(
+                {
+                    'dateTime': warning['datetime'],
+                    'amount': None,
+                    'lockId': lockId,
+                    'lockLocation': lock['lockLocation'],
+                    'lockName': lock['lockName'],
+                    'error': warning['error'],
+                }
+            )
 
     # get dict of notification list
     notificationList = {
@@ -1358,12 +1585,15 @@ def get_warning_view_notification_list( userId: str ):
 
     return notificationList
 
-# delete notification by notiId in interested lockid
-@app.delete('/notification/{notiId}/{lockId}', tags=['Notifications'])
-def delete_notification( notiId: str, lockId: str ):
+# Ignore risk attempt by delete warning by lockid
+@app.delete('/delete/notification/warning/{lockId}', tags=['Notifications'])
+@app.delete('/delete/notification/warning/{lockId}/{notiId}', tags=['Notifications'])
+def delete_warning_notification( lockId: str, notiId: str = None ):
     '''
-        delete notification by notiId and lockId
-        input: notiId (str) and lockId (int)
+        delete warning notification by notiId and lockId
+        if not sent notiId = delete all warning by lockId
+        if sent notiId = delete warning by notiId and lockId
+        input: lockId (int) and notiId (str)(optional)
         output: dict of notification
         for example:
         {
@@ -1374,44 +1604,49 @@ def delete_notification( notiId: str, lockId: str ):
     '''
 
     # connect to database
-    collection = db['Request']
     lockCollection = db['Locks']
 
-    # delete notification by notiId
-    collection.delete_one( { 'reqId': notiId } )
+    # delete warning notification of lock
+    # in case notiId is None
+    if not notiId:
+        # delete all of warningId in warning list
+        lockCollection.update_one( { 'lockId': lockId }, { '$set': { 'warning': [] } } )
 
-    # delete notification to lock
-    # NOTE: delete notification in request list of lock
-    lockCollection.update_one( { 'lockId': lockId }, { '$pull': { 'request': { 'reqId': notiId } } } )
+        return { 'lockId': lockId, 'message': 'Delete all notification successfully' }
 
-    return { 'notiId': notiId, 'lockId': lockId, 'message': 'Delete notification successfully' }
+    # in case notiId is not None
+    else:
+        # delete warningId of warning list of lock
+        lockCollection.update_one( { 'lockId': lockId }, { '$pull': { 'warning': { 'reqId': notiId } } } )
 
-# Ignore all risk attempt by delete warning by lockid
-@app.delete('/warning/ignore/{lockId}', tags=['Notifications'])
-def Ignore_all_risk_attempt( lockId: str ):
+        return { 'notiId': notiId, 'lockId': lockId, 'message': 'Delete notification successfully' }
+
+# delete notification of invitation by lockId
+# change invitation status to declined
+@app.delete('/delete/notification/invitation/{lockId}', tags=['Notifications'])
+def delete_invitation_notification( lockId: str ):
     '''
-        Ignore all risk attempt by delete warning by lockId
+        delete invitation notification by lockId and change invitation status to declined
+        post new history to lock?
+        change status of invitation to declined
+
         input: lockId (int)
-        output: dict of warning
+        output: dict of invitation notification
         for example:
         {
             "lockId": "12345",
-            "message": "Ignore warning successfully"
+            "message": "Delete invitation notification successfully"
         }
     '''
 
     # connect to database
-    collection = db['Warning']
-    lockCollection = db['Locks']
+    inviteCollection = db['Invitation']
 
-    # delete warning by warningId
-    collection.delete_one( { 'lockId': lockId } )
+    # delete invitation notification by lockId
+    inviteCollection.update_many( { 'lockId': lockId }, { '$set': { 'invStatus': 'declined' } } )
 
-    # delete warning to lock
-    # NOTE: delete warning in warning list of lock
-    lockCollection.update_one( { 'lockId': lockId }, { '$pull': { 'warning': { 'lockId': lockId } } } )
+    return { 'lockId': lockId, 'message': 'Delete invitation notification successfully' }
 
-    return { 'lockId': lockId, 'message': 'Ignore warning successfully' }
 
 # accept request 
 @app.put('/acceptRequest/{reqId}', tags=['Accept Request'])

@@ -80,28 +80,28 @@ class Other( BaseModel ):
 # class for warning
 class Warning( BaseModel ):
     warningId: str
-    subMode: str
+    # subMode: str
     userId: str
     userRole: str
     lockId: str
-    lockLocation: str
     datetime: datetime
     securityStatus: str
+    message: str
 
-# class for notification
-# NOTE: should it be have??? or 1. seperate to request invite warning 2. everything collect in notofication but seperate by mode
-class Notification( BaseModel ):
-    notiId: int
-    mode: str
-    datetime: datetime
-    subMode: str
-    amount: int
-    type: str
-    userId: str
-    userRole: str
-    lockId: str
-    lockLocation: str
-    lockName: str
+# # class for notification
+# # NOTE: should it be have??? or 1. seperate to request invite warning 2. everything collect in notofication but seperate by mode
+# class Notification( BaseModel ):
+#     notiId: int
+#     mode: str
+#     datetime: datetime
+#     subMode: str
+#     amount: int
+#     type: str
+#     userId: str
+#     userRole: str
+#     lockId: str
+#     lockLocation: str
+#     lockName: str
 
 # class for guest
 class Guest( BaseModel ):
