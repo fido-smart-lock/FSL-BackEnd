@@ -7,7 +7,7 @@ import requests
 import os
 import hashlib, uuid
 from datetime import datetime
-from api.database import User, Lock, History, Request, UserRole
+from database import User, Lock, History, Request, UserRole
 
 app = FastAPI()
 
