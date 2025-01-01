@@ -7,7 +7,7 @@ import requests
 import os
 import hashlib, uuid
 from datetime import datetime
-from api.database import User, Lock, History, Request, User_Signup, NewLock, NewRequest, NewInvitation, Invitation, Other
+from database import User, Lock, History, Request, User_Signup, NewLock, NewRequest, NewInvitation, Invitation, Other
 import random
 
 app = FastAPI()
