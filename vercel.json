@@ -1,23 +1,25 @@
 {
-  "version": 2,
   "builds": [
       {
           "src": "api/main.py",
-          "use": "@vercel/python"
+          "use": "@vercel/python",
+          "config": {
+            "runtime": "python3.9" 
+          }
       }
   ],
   "routes": [
       {
           "src": "/(.*)",
-          "dest": "/",
+          "dest": "api/main.py",
           "methods": [
-              "GET",
-              "POST",
-              "PUT",
-              "PATCH",
-              "DELETE",
-              "OPTIONS"
-          ]
+                "GET",
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE",
+                "OPTIONS"
+            ]
       }
   ]
 }

@@ -1,22 +1,20 @@
 from fastapi import FastAPI, HTTPException
-from pymongo import MongoClient
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from typing import List, Dict
-import requests
 import os
 import hashlib, uuid
 from datetime import datetime
 from api.database import User, Lock, History, Request, User_Signup, NewLock, NewRequest, NewInvitation, Invitation, Other
 import random
+from pymongo import MongoClient
 
 app = FastAPI()
 
 #   Load .env
-load_dotenv( '.env' )
-user = os.getenv( 'user' )
-password = os.getenv( 'password' )
-MY_VARIABLE = os.getenv('MY_VARIABLE')
+load_dotenv('.env')
+user = os.getenv('user')
+password = os.getenv('password')
 
 #   Connect to MongoDB
 client = MongoClient(f"mongodb+srv://{user}:{password}@cluster0.o068s.mongodb.net/")
@@ -27,10 +25,10 @@ origins = ['*']
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins = origins,
-    allow_credentials = True,
-    allow_methods = ['*'],
-    allow_headers = ['*'],
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=['*'],
+    allow_headers=['*'],
 )
 
 ##################################################
@@ -253,7 +251,7 @@ def generate_history_id():
 # root
 @app.get('/')
 def read_root():
-    return { "Hello": "World" }
+    return "Hello World"
 
 # user signup
 @app.post('/signup', tags=['Users'])   
@@ -381,7 +379,6 @@ def get_lock_location( userId: str ):
             "dataList": ["Home", "Office"],
         }
     '''
-
     # connect to database
     collection = db['Users']
 
@@ -1135,7 +1132,7 @@ def get_request_notification_list( userId: str ):
     return notificationList
 
 # get notification connect mode list by userId
-app.get('/notification/connect/{userId}', tags=['Notifications'])
+@app.get('/notification/connect/{userId}', tags=['Notifications'])
 def get_connect_notification_list( userId: str ):
     '''
         get connect list in notification format by userId and order by date time
