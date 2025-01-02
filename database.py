@@ -14,11 +14,12 @@ from typing import Optional
 #
 
 
-class User_Signup( BaseModel ):
+class UserSignup( BaseModel ):
     email: str
     password: str
     firstName: str
     lastName: str
+    userImage: str
 
 # class for history
 class History( BaseModel ):
@@ -122,7 +123,6 @@ class Lock( BaseModel ):
     lockId: str
     lockName: str
     lockImage: str
-    lockStatus: str
     lockLocation: str
     securityStatus: str
     admin: List[ str ]
@@ -131,7 +131,9 @@ class Lock( BaseModel ):
     invitation: List[ str ]
     request: List[ str ]
     history: List[ str ]
+    connect: List[ str ]
     warning: List[ str ]
+    other: List[ str ]
 
 # class for lock details
 class LockDetails( BaseModel ):
@@ -142,7 +144,6 @@ class LockDetails( BaseModel ):
 
 # class for users
 class User( BaseModel ):
-    id: int
     firstName: str
     lastName: str
     email: str
@@ -155,3 +156,10 @@ class User( BaseModel ):
     admin: List[ str ]
     member: List[ str ]
     guest: List[ Guest ]
+
+# class for user edit profile
+class UserEditProfile( BaseModel ):
+    userId: str
+    newEmail: str
+    newFirstName: str
+    newLastName: str

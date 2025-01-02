@@ -3,24 +3,31 @@ from pymongo import MongoClient
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from typing import List, Dict
-import requests
 import os
 import hashlib, uuid
 from datetime import datetime
-from database import User, Lock, History, Request, User_Signup, NewLock, NewRequest, NewInvitation, Invitation, Other
+from database import User, Lock, History, Request, UserSignup, NewLock, NewRequest, NewInvitation, Invitation, Other, Connection, Warning, UserEditProfile
 import random
+import uvicorn
 
 app = FastAPI()
 
 #   Load .env
 load_dotenv( '.env' )
-user = os.getenv( 'user' )
-password = os.getenv( 'password' )
+user = os.getenv( 'MONGO_USER' )
+password = os.getenv( 'MONGO_PASSWORD' )
+db_name = os.getenv("MONGO_DB")
 MY_VARIABLE = os.getenv('MY_VARIABLE')
 
 #   Connect to MongoDB
 client = MongoClient(f"mongodb+srv://{user}:{password}@cluster0.o068s.mongodb.net/")
-db = client['Fido']
+db = client[db_name]
+
+try:
+    db.command("serverStatus")
+    print("Connected to database")
+except Exception as e:
+    print(e)
 
 #   CORS
 origins = ['*']
@@ -39,18 +46,18 @@ app.add_middleware(
 #
 
 # hash password
-def hash_password( password, salt = None ):
+def hash_password( password, salt ):
     '''
         Hash password with salt
         Input: password (str)
-        Output: password_hash (str), salt (str)
+        Output: password_hash (str)
     '''
 
     if not salt:
         salt = uuid.uuid4().hex
     password_salt = ( password + salt ).encode( 'utf-8' )
     password_hash = hashlib.sha512( password_salt ).hexdigest()
-    return password_hash, salt
+    return password_hash
 
 # genrate user code 
 def generate_user_code():
@@ -257,10 +264,10 @@ def read_root():
 
 # user signup
 @app.post('/signup', tags=['Users'])   
-def signup( user_signup: User_Signup ):
+def signup( usersignup: UserSignup ):
     '''
         normal sign up
-        input: User_Signup
+        input: UserSignup
         output: dict
     '''
 
@@ -268,28 +275,33 @@ def signup( user_signup: User_Signup ):
     collection = db['Users']
 
     # check if email already exists
-    if collection.find_one( { 'email': user.email }, { '_id': 0 } ):
+    if collection.find_one( { 'email': usersignup.email }, { '_id': 0 } ):
         raise HTTPException( status_code = 400, detail = "Email already exists" )
     
     # generate user code
     userCode = generate_user_code()
 
     # generate user id
-    userId = generate_user_id( user.firstName, user.lastName )
+    userId = generate_user_id( usersignup.firstName, usersignup.lastName )
 
     # hash password
     salt = uuid.uuid4().hex
-    password_hash, salt = hash_password( user.password, salt )
+    password_hash = hash_password( usersignup.password, salt )
 
     # create new user
     newUser = User(
-        firstName = user.firstName, 
-        lastName = user.lastName, 
-        email = user.email, 
+        firstName = usersignup.firstName, 
+        lastName = usersignup.lastName, 
+        email = usersignup.email, 
         password_hash = password_hash, 
         salt = salt,
         userId = userId,
         userCode = userCode,
+        userImage = usersignup.userImage,
+        lockLocationList = [],
+        admin = [],
+        member = [],
+        guest = [],
     )
 
     # add user to database
@@ -308,8 +320,24 @@ def login( email: str, password: str ):
     if not user:
         raise HTTPException( status_code = 404, detail = "User not found" )
     
+    # hash password
+    password_hash, _ = hash_password( password, user['salt'] )
+
+    # check if password is correct
+    if password_hash != user['password_hash']:
+        raise HTTPException( status_code = 401, detail = "Incorrect password" )
+    
+    userInfo = {   
+        'userId': user['userId'],
+        'firstName': user['firstName'],
+        'lastName': user['lastName'],
+        'userImage': user['userImage'],
+    }
+
+    return userInfo
+    
 ##################################################
-#   Lock Mangement
+#   Lock Management
 #
 
 # get admin lock
@@ -411,6 +439,7 @@ def get_user_lock( userId: str, lockLocationActiveStr: str = None):
         {
             "userId": "js8974"
             "userName":"Jonathan",
+            "userImage": "jonathan.jpg",
             "lockLocationList": ["Home", "Office"],
             "lockLocationActive": "Home",
             "dataList": [
@@ -474,6 +503,7 @@ def get_user_lock( userId: str, lockLocationActiveStr: str = None):
     userLock = {
         'userId': user['userId'],
         'userName': user['firstName'],
+        'userImage': user['userImage'],
         'lockLocation': lockLocationActiveStr,
         'dataList': dataList,
     }
@@ -812,7 +842,6 @@ def post_new_lock( new_lock: NewLock ):
         lockName = new_lock.lockName,
         lockLocation = new_lock.lockLocation,
         lockImage = new_lock.lockImage,
-        lockStatus = 'secure',
         securityStatus = 'secure',
         admin = [ new_lock.userId ],
         member = [],
@@ -820,6 +849,7 @@ def post_new_lock( new_lock: NewLock ):
         invitation = [],
         request = [],
         history = [],
+        connect =[],
         warning = [],
     )
 
@@ -883,10 +913,13 @@ def post_new_request( new_request: NewRequest ):
     # NOTE: add new request to lock by append new request to request list
     lockCollection.update_one( { 'lockId': new_request.lockId }, { '$push': { 'request': requestId } } )
 
+    # generate other id
+    otherId = generate_other_id()
+    
     # create new other
     # NOTE: create new other with subMode = sent
     newOther = Other(
-        otherId = generate_other_id(),
+        otherId = otherId,
         subMode = 'sent',
         amount = None,
         userId = new_request.userId,
@@ -897,6 +930,10 @@ def post_new_request( new_request: NewRequest ):
 
     # add new other to database
     otherCollection.insert_one( newOther.dict() )
+
+    # update other to lock
+    # NOTE: add new other to lock by append new other to other list
+    lockCollection.update_one( { 'lockId': new_request.lockId }, { '$push': { 'other': otherId } } )
 
     # generate new history id
     historyId = generate_history_id()
@@ -969,10 +1006,13 @@ def post_new_invitation( new_invitation: NewInvitation ):
     # NOTE: add new invitation to lock by append invitation id to invitation list
     lockCollection.update_one( { 'lockId': new_invitation.lockId }, { '$push': { 'invitation': invitationId } } )
 
+    # generate other id
+    otherId = generate_other_id()
+
     # create new other
     # NOTE: create new other with subMode = invite
     newOther = Other(
-        otherId = generate_other_id(),
+        otherId = otherId,
         subMode = 'invite',
         amount = None,
         userId = new_invitation.desUserId,
@@ -983,6 +1023,10 @@ def post_new_invitation( new_invitation: NewInvitation ):
 
     # add new other to database
     otherCollection.insert_one( newOther.dict() )
+
+    # update other to lock
+    # NOTE: add new other to lock by append new other to other list
+    lockCollection.update_one( { 'lockId': new_invitation.lockId }, { '$push': { 'other': otherId } } )
 
     return { 'srcUserId': new_invitation.srcUserId, 'desUserId': new_invitation.desUserId, 'role': new_invitation.role, 'dateTime': new_invitation.datetime, 'message': 'Send invitation successfully' }
     
@@ -1012,6 +1056,10 @@ def post_lock_location( userId: str, lockLocationStr: str ):
     collection.update_one( { 'userId': userId }, { '$push': { 'lockLocationList': lockLocationStr } } )
 
     return { 'userId': userId, 'message': 'Update lock location successfully' }
+
+##################################################
+#   Notification
+#
 
 # get notofication request mode list by userId
 @app.get('/notification/req/{userId}', tags=['Notifications'])
@@ -1621,13 +1669,12 @@ def delete_warning_notification( lockId: str, notiId: str = None ):
 
         return { 'notiId': notiId, 'lockId': lockId, 'message': 'Delete notification successfully' }
 
-# delete notification of invitation by lockId
+# delete notification of invitation by notiId
 # change invitation status to declined
-@app.delete('/delete/notification/invitation/{lockId}', tags=['Notifications'])
-def delete_invitation_notification( lockId: str ):
+@app.delete('/delete/notification/invitation/{notiId}', tags=['Notifications'])
+def delete_invitation_notification( notiId: str ):
     '''
-        delete invitation notification by lockId and change invitation status to declined
-        post new history to lock?
+        delete invitation notification by notiId and change invitation status to declined
         change status of invitation to declined
 
         input: lockId (int)
@@ -1641,20 +1688,61 @@ def delete_invitation_notification( lockId: str ):
 
     # connect to database
     inviteCollection = db['Invitation']
+    lockCollection = db['Locks']
+    otherCollection = db['Other']
 
-    # delete invitation notification by lockId
-    inviteCollection.update_many( { 'lockId': lockId }, { '$set': { 'invStatus': 'declined' } } )
+    # get invitation by notiId
+    invitation = inviteCollection.find_one( { 'invId': notiId }, { '_id': 0 } )
 
-    return { 'lockId': lockId, 'message': 'Delete invitation notification successfully' }
+    # change status of invitation to declined
+    inviteCollection.update_one( { 'invId': notiId }, { '$set': { 'invStatus': 'declined' } } )
 
+    # delete invitation notification of lock
+    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$pull': { 'invitation': notiId } } )
+
+    # delete invitation notification of lock
+    otherCollection.update_one( { 'lockId': invitation['lockId'] }, { '$pull': { 'other': notiId } } )
+
+    # delete other notification
+    otherCollection.delete_one( { 'otherId': notiId } )
+
+    # return dict of invitation notification
+    return { 'lockId': invitation['lockId'],'userId': invitation['desUserId'] ,'message': 'Delete invitation notification successfully' }
+    
+# delete connect notification by userId
+@app.delete('/delete/notification/other/{notiId}', tags=['Notifications'])
+def delete_other_notification( notiId: str ):
+    '''
+        delete other notification by notiId
+        input: notiId (str)
+        output: dict of other notification
+        for example:
+        {
+            "notiId": "other01",
+            "message": "Delete notification successfully"
+        }
+    '''
+
+    # connect to database
+    otherCollection = db['Other']
+
+    # delete other notification by notiId
+    otherCollection.delete_one( { 'otherId': notiId } )
+
+    return { 'notiId': notiId, 'message': 'Delete notification successfully' }
 
 # accept request 
 @app.put('/acceptRequest/{reqId}', tags=['Accept Request'])
-def accept_request( reqId: str ):
+def accept_request( reqId: str, expireDatetime: datetime ):
     '''
-        accept request by update request status to accepted and 
-        add user to lock by append user to member role
-        add location to lock location list
+        accept request by update request status to accepted 
+        add user to lock by append user to guest role
+        add lock to user by append lock id to guest list
+        add location to lock location list of user
+        post history and add history to lock
+        post connect add add connect to lock
+        post other and add other to lock
+        delete request from lock
         input: reqId (str)
         output: dict of request
         for example:
@@ -1677,13 +1765,374 @@ def accept_request( reqId: str ):
     # update request status to accepted
     collection.update_one( { 'reqId': reqId }, { '$set': { 'requestStatus': 'accepted' } } )
 
+    # update expire datetime
+    collection.update_one( { 'reqId': reqId }, { '$set': { 'datetime': expireDatetime } } )
+
     # add user to lock
-    # NOTE: add user to lock by append user to guest role
-    lockCollection.update_one( { 'lockId': request['lockId'] }, { '$push': { 'roleToUserIdListDict.guest': request['userId'] } } )
-    userCollection.update_one( { 'userId': request['userId'] }, { '$push': { 'userRoleToLockIdListDict.guest': request['lockId'] } } )
+    # add lock to user
+    # NOTE: append to guest role
+    lockCollection.update_one( { 'lockId': request['lockId'] }, { '$push': { 'guest': request['userId'] } } )
+    userCollection.update_one( { 'userId': request['userId'] }, { '$push': { 'guest': request['lockId'] } } )
 
     # add location to lock location list in user
     # NOTE: add location to lock location list
     userCollection.update_one( { 'userId': request['userId'] }, { '$push': { 'lockLocationList': request['lockLocation'] } } )
 
+    # generate new connect id
+    connectId = generate_connect_id()
+
+    # create new connect
+    newConnect = Connection(
+        reqId = connectId,
+        lockId = request['lockId'],
+        userId = request['userId'],
+        datetime = datetime.now(),
+    )
+
+    # add new connect to database
+    db['Connect'].insert_one( newConnect.dict() )
+
+    # add new connect to lock
+    # NOTE: add new connect to lock by append new connect to connect list
+    lockCollection.update_one( { 'lockId': request['lockId'] }, { '$push': { 'connect': connectId } } )
+
+    # generate new history id
+    historyId = generate_history_id()
+
+    # create new history
+    newHistory = History(
+        hisId = historyId, 
+        userId = request['userId'],
+        lockId = request['lockId'],
+        status = 'connect',
+        datetime = datetime.now(),
+    )
+
+    # add new history to database
+    db['History'].insert_one( newHistory.dict() )
+
+    # add new history to lock
+    # NOTE: add new history to lock by append new history to history list
+    lockCollection.update_one( { 'lockId': request['lockId'] }, { '$push': { 'history': historyId } } )
+
+    # generate new other id
+    otherId = generate_other_id()
+
+    # create new other
+    # NOTE: create new other with subMode = accepted
+    newOther = Other(
+        otherId = otherId,
+        subMode = 'accepted',
+        amount = None,
+        userId = request['userId'],
+        userRole = None,
+        lockId = request['lockId'],
+        datetime = datetime.now(),
+    )
+
+    # add new other to database
+    db['Other'].insert_one( newOther.dict() )
+
+    # add new other to lock
+    # NOTE: add new other to lock by append new other to other list
+    lockCollection.update_one( { 'lockId': request['lockId'] }, { '$push': { 'other': otherId } } )
+
+    # delete request from lock
+    # NOTE: delete request from lock by pull request from request list
+    lockCollection.update_one( { 'lockId': request['lockId'] }, { '$pull': { 'request': reqId } } )
+
     return { 'reqId': reqId, 'message': 'Accept request successfully' }
+
+# accept all request
+@app.put('/acceptAllRequest/{lockId}', tags=['Accept Request'])
+def accept_all_request(  lockId: str = None ):
+    '''
+        accept all request by using function accept_request
+        input: lockId (str)
+        output: dict of request
+        for example:
+        {
+            "lockId": "12345",
+            "message": "Accept all request successfully"
+        }
+    '''
+
+    # connect to database
+    collection = db['Request']
+
+    # get all request by lockId
+    requests = list( collection.find( { 'lockId': lockId }, { '_id': 0 } ) )
+
+    # accept all request by using function accept_request
+    for request in requests:
+        accept_request( request['reqId'] )
+
+    return { 'lockId': lockId, 'message': 'All request have been accepted' }
+
+# decline request
+@app.put('/declineRequest/{reqId}', tags=['Decline Request'])
+def decline_request( reqId: str ):
+    '''
+        decline request by update request status to declined
+        delete request from lock
+        input: reqId (str)
+        output: dict of request
+        for example:
+        {
+            "reqId": "req01",
+            "message": "Decline request successfully"
+        }
+    '''
+
+    # connect to database
+    collection = db['Request']
+
+    # get request by reqId
+    request = collection.find_one( { 'reqId': reqId }, { '_id': 0 } )
+    if not request:
+        raise HTTPException( status_code = 404, detail = "Request not found" )
+
+    # update request status to declined
+    collection.update_one( { 'reqId': reqId }, { '$set': { 'requestStatus': 'declined' } } )
+
+    # delete request from lock
+    # NOTE: delete request from lock by pull request from request list
+    db['Locks'].update_one( { 'lockId': request['lockId'] }, { '$pull': { 'request': reqId } } )
+
+    return { 'reqId': reqId, 'message': 'Decline request successfully' }
+
+# accecpt invitation
+@app.put('/acceptInvitation/{invId}', tags=['Accept Invitation'])
+def accept_invitation( invId: str ):
+    '''
+        accept invitation by update invitation status to accepted
+        add user to lock by append user to guest role
+        add lock to user by append lock id to guest list
+        add location to lock location list of user
+        post history and add history to lock
+        post connect add add connect to lock
+        post other and add other to lock
+        input: invId (str)
+        output: dict of invitation
+        for example:
+        {
+            "invId": "inv01",
+            "message": "Accept invitation successfully"
+        }
+    '''
+
+    # connect to database
+    inviteCollection = db['Invitation']
+    lockCollection = db['Locks']
+    userCollection = db['Users']
+
+    # get invitation by invId
+    invitation = inviteCollection.find_one( { 'invId': invId }, { '_id': 0 } )
+    if not invitation:
+        raise HTTPException( status_code = 404, detail = "Invitation not found" )
+
+    # update invitation status to accepted
+    inviteCollection.update_one( { 'invId': invId }, { '$set': { 'invStatus': 'accepted' } } )
+
+    # add user to lock
+    # add lock to user
+    # NOTE: append to guest role
+    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$push': { invitation['role']: invitation['desUserId'] } } )
+    userCollection.update_one( { 'userId': invitation['desUserId'] }, { '$push': { invitation['role']: invitation['lockId'] } } )
+
+    # add location to lock location list in user
+    # NOTE: add location to lock location list
+    userCollection.update_one( { 'userId': invitation['desUserId'] }, { '$push': { 'lockLocationList': invitation['lockLocation'] } } )
+
+    # generate new connect id
+    connectId = generate_connect_id()
+
+    # create new connect
+    newConnect = Connection(
+        reqId = connectId,
+        lockId = invitation['lockId'],
+        userId = invitation['desUserId'],
+        datetime = datetime.now(),
+    )
+
+    # add new connect to database
+    db['Connect'].insert_one( newConnect.dict() )
+
+    # add new connect to lock
+    # NOTE: add new connect to lock by append new connect to connect list
+    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$push': { 'connect': connectId } } )
+
+    # generate new history id
+    historyId = generate_history_id()
+
+    # create new history
+    newHistory = History(
+        hisId = historyId, 
+        userId = invitation['desUserId'],
+        lockId = invitation['lockId'],
+        status = 'connect',
+        datetime = datetime.now(),
+    )
+
+    # add new history to database
+    db['History'].insert_one( newHistory.dict() )
+
+    # add new history to lock
+    # NOTE: add new history to lock by append new history to history list
+    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$push': { 'history': historyId } } )
+
+    # generate new other id
+    otherId = generate_other_id()
+
+    # create new other
+    # NOTE: create new other with subMode = accepted
+    newOther = Other(
+        otherId = otherId,
+        subMode = 'accepted',
+        amount = None,
+        userId = invitation['desUserId'],
+        userRole = None,
+        lockId = invitation['lockId'],
+        datetime = datetime.now(),
+    )
+
+    # add new other to database
+    db['Other'].insert_one( newOther.dict() )
+
+    # add new other to lock
+    # NOTE: add new other to lock by append new other to other list
+    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$push': { 'other': otherId } } )
+
+    # delete invitation from lock
+    # NOTE: delete invitation from lock by pull invitation from invitation list
+    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$pull': { 'invitation': invId } } )
+
+    return { 'invId': invId, 'message': 'Accept invitation successfully' }
+
+# decline invitation
+@app.put('/declineInvitation/{invId}', tags=['Decline Invitation'])
+def decline_invitation( invId: str ):
+    '''
+        decline invitation by update invitation status to declined
+        delete invitation from lock
+        input: invId (str)
+        output: dict of invitation
+        for example:
+        {
+            "invId": "inv01",
+            "message": "Decline invitation successfully"
+        }
+    '''
+
+    # connect to database
+    inviteCollection = db['Invitation']
+
+    # get invitation by invId
+    invitation = inviteCollection.find_one( { 'invId': invId }, { '_id': 0 } )
+    if not invitation:
+        raise HTTPException( status_code = 404, detail = "Invitation not found" )
+
+    # update invitation status to declined
+    inviteCollection.update_one( { 'invId': invId }, { '$set': { 'invStatus': 'declined' } } )
+
+    # delete invitation from lock
+    # NOTE: delete invitation from lock by pull invitation from invitation list
+    db['Locks'].update_one( { 'lockId': invitation['lockId'] }, { '$pull': { 'invitation': invId } } )
+
+    return { 'invId': invId, 'message': 'Decline invitation successfully' }
+
+##################################################
+#   User Setting
+#
+
+# get user detail by userId
+@app.get('/user/{userId}', tags=['User Setting'])
+def get_user_detail( userId: str ):
+    '''
+        get user detail by userId
+        input: userId (str)
+        output: dict of user detail
+        for example:
+        {
+            "userId": "js7694",
+            "userName": "Jonathan",
+            "userSurname": "Smith",
+            "userEmail": "jonathan.s@example.com",
+            "isEmailVerified": true
+        }
+    '''
+
+    # connect to database
+    collection = db['Users']
+
+    # get user by userId
+    user = collection.find_one( { 'userId': userId }, { '_id': 0 } )
+    if not user:
+        raise HTTPException( status_code = 404, detail = "User not found" )
+    
+    return user
+
+# user edit profile
+@app.put('/user/editProfile/{userId}', tags=['Edit Profile'])
+def user_edit_profile( user_edit_profile: UserEditProfile ):
+    '''
+        edit user profile by update user detail
+        input: userId (str) and user detail
+        output: dict of user detail
+        for example:
+        {
+            "userId": "js7694",
+            "userName": "Jonathan",
+            "userSurname": "Smith",
+            "userEmail": "jonathan.s@example.com",
+            "message": "Edit user profile successfully"
+        }
+    '''
+
+    # connect to database
+    collection = db['Users']
+
+    # check user exist
+    user = collection.find_one( { 'userId': user_edit_profile.userId }, { '_id': 0 } )
+    if not user:
+        raise HTTPException( status_code = 404, detail = "User not found" )
+
+    # update user detail
+    collection.update_one( { 'userId': user_edit_profile.userId }, { '$set': user_edit_profile.dict() } )
+
+    return { 'userId': user_edit_profile.userId, 'message': 'Edit user profile successfully' }
+
+# user change password
+@app.put('/user/changePassword/{userId}', tags=['Change Password'])
+def user_change_password( userId: str, currentPassword: str, newPassword: str ):
+    '''
+        change user password by update user password
+        input: userId (str), currentPassword (str) and newPassword (str)
+        output: dict of user detail
+        for example:
+        {
+            "userId": "js8765",
+            "message": "Password changed successfully."
+        }
+
+    '''
+
+    # connect to database
+    collection = db['Users']
+
+    # check user exist
+    user = collection.find_one( { 'userId': user_change_password.userId }, { '_id': 0 } )
+    if not user:
+        raise HTTPException( status_code = 404, detail = "User not found" )
+    
+    # get current password hash from 
+    current_password_hash = hash_password( currentPassword, user['salt'] )
+
+    # check current password
+    if user['password_hash'] != current_password_hash:
+        raise HTTPException( status_code = 403, detail = "Current password doesn’t match" )
+
+    # update user password
+    collection.update_one( { 'userId': userId }, { '$set': { 'userPassword': newPassword } } )
+
+    return { 'userId': userId, 'message': 'Change password successfully' }
