@@ -48,7 +48,7 @@ class NewInvitation( BaseModel ):
     desUserId: str
     role: str
     lockId: str
-    datetime: Optional[datetime] = None
+    dateTime: Optional[datetime] = None
 
 # class for invitation
 class Invitation( BaseModel ):
