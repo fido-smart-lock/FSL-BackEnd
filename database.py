@@ -34,6 +34,9 @@ class Request( BaseModel ):
     reqId: str
     userId: str
     lockId: str
+    lockName: str
+    lockLocation: str
+    lockImage: str
     requestStatus: str
     datetime: datetime
 
@@ -41,6 +44,14 @@ class Request( BaseModel ):
 class NewRequest( BaseModel ):
     userId: str
     lockId: str
+    lockName: str
+    lockLocation: str
+    lockImage: str
+
+# class for accept request
+class AcceptRequest( BaseModel ):
+    reqId: str
+    expireDatetime: datetime
 
 # class for new invitation
 class NewInvitation( BaseModel ):
@@ -59,6 +70,13 @@ class Invitation( BaseModel ):
     lockId: str
     datetime: datetime
     invStatus: str
+
+# class for accept invitation
+class AcceptInvitation( BaseModel ):
+    invId: str
+    lockName: str
+    lockLocation: str
+    lockImage: str
 
 # class for connection
 class Connection( BaseModel ):
@@ -108,6 +126,9 @@ class Warning( BaseModel ):
 class Guest( BaseModel ):
     userId: str
     lockId: str
+    lockName: str
+    lockLocation: str
+    lockImage: str
     expireDatetime: datetime
 
 # class for new lock
@@ -121,9 +142,6 @@ class NewLock( BaseModel ):
 # class for locks
 class Lock( BaseModel ):
     lockId: str
-    lockName: str
-    lockImage: str
-    lockLocation: str
     securityStatus: str
     admin: List[ str ]
     member: List[ str ]
@@ -133,10 +151,9 @@ class Lock( BaseModel ):
     history: List[ str ]
     connect: List[ str ]
     warning: List[ str ]
-    other: List[ str ]
 
 # class for lock details
-class LockDetails( BaseModel ):
+class LockDetail( BaseModel ):
     lockId: str
     lockName: str
     lockLocation: str
@@ -153,13 +170,14 @@ class User( BaseModel ):
     userId: str
     userCode: int
     lockLocationList: List[ str ]
-    admin: List[ str ]
-    member: List[ str ]
+    admin: List[ LockDetail ]
+    member: List[ LockDetail ]
     guest: List[ Guest ]
 
 # class for user edit profile
 class UserEditProfile( BaseModel ):
     userId: str
-    newEmail: str
-    newFirstName: str
-    newLastName: str
+    newEmail: Optional[str] = None
+    newFirstName: Optional[str] = None
+    newLastName: Optional[str] = None
+    newImage: Optional[str] = None
