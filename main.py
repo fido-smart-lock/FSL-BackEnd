@@ -2,13 +2,11 @@ from fastapi import FastAPI, HTTPException
 from pymongo import MongoClient
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from typing import List, Dict
 import os
 import hashlib, uuid
 from datetime import datetime
 from database import User, Lock, History, Request, UserSignup, NewLock, NewRequest, NewInvitation, Invitation, Other, Connection, Warning, UserEditProfile, Guest, LockDetail, AcceptRequest, AcceptInvitation, AcceptAllRequest, UserChangePassword
 import random
-import uvicorn
 
 app = FastAPI()
 
