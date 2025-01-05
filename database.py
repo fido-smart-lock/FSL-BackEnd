@@ -14,11 +14,12 @@ from typing import Optional
 #
 
 
-class User_Signup( BaseModel ):
+class UserSignup( BaseModel ):
     email: str
     password: str
     firstName: str
     lastName: str
+    userImage: str
 
 # class for history
 class History( BaseModel ):
@@ -33,6 +34,9 @@ class Request( BaseModel ):
     reqId: str
     userId: str
     lockId: str
+    lockName: str
+    lockLocation: str
+    lockImage: str
     requestStatus: str
     datetime: datetime
 
@@ -40,6 +44,19 @@ class Request( BaseModel ):
 class NewRequest( BaseModel ):
     userId: str
     lockId: str
+    lockName: str
+    lockLocation: str
+    lockImage: str
+
+# class for accept request
+class AcceptRequest( BaseModel ):
+    reqId: str
+    expireDatetime: datetime
+
+# class for accept request
+class AcceptAllRequest( BaseModel ):
+    lockId: str
+    expireDatetime: datetime
 
 # class for new invitation
 class NewInvitation( BaseModel ):
@@ -47,7 +64,7 @@ class NewInvitation( BaseModel ):
     desUserId: str
     role: str
     lockId: str
-    datetime: Optional[datetime] = None
+    dateTime: Optional[datetime] = None
 
 # class for invitation
 class Invitation( BaseModel ):
@@ -58,6 +75,13 @@ class Invitation( BaseModel ):
     lockId: str
     datetime: datetime
     invStatus: str
+
+# class for accept invitation
+class AcceptInvitation( BaseModel ):
+    invId: str
+    lockName: str
+    lockLocation: str
+    lockImage: str
 
 # class for connection
 class Connection( BaseModel ):
@@ -107,6 +131,9 @@ class Warning( BaseModel ):
 class Guest( BaseModel ):
     userId: str
     lockId: str
+    lockName: str
+    lockLocation: str
+    lockImage: str
     expireDatetime: datetime
 
 # class for new lock
@@ -120,10 +147,6 @@ class NewLock( BaseModel ):
 # class for locks
 class Lock( BaseModel ):
     lockId: str
-    lockName: str
-    lockImage: str
-    lockStatus: str
-    lockLocation: str
     securityStatus: str
     admin: List[ str ]
     member: List[ str ]
@@ -131,10 +154,11 @@ class Lock( BaseModel ):
     invitation: List[ str ]
     request: List[ str ]
     history: List[ str ]
+    connect: List[ str ]
     warning: List[ str ]
 
 # class for lock details
-class LockDetails( BaseModel ):
+class LockDetail( BaseModel ):
     lockId: str
     lockName: str
     lockLocation: str
@@ -142,7 +166,6 @@ class LockDetails( BaseModel ):
 
 # class for users
 class User( BaseModel ):
-    id: int
     firstName: str
     lastName: str
     email: str
@@ -152,6 +175,20 @@ class User( BaseModel ):
     userId: str
     userCode: int
     lockLocationList: List[ str ]
-    admin: List[ str ]
-    member: List[ str ]
+    admin: List[ LockDetail ]
+    member: List[ LockDetail ]
     guest: List[ Guest ]
+
+# class for user edit profile
+class UserEditProfile( BaseModel ):
+    userId: str
+    newEmail: Optional[str] = None
+    newFirstName: Optional[str] = None
+    newLastName: Optional[str] = None
+    newImage: Optional[str] = None
+
+# class for user change password
+class UserChangePassword( BaseModel ):
+    userId: str
+    currentPassword: str
+    newPassword: str
