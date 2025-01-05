@@ -1,8 +1,7 @@
 from fastapi import FastAPI, HTTPException
+from pymongo import MongoClient
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from typing import List, Dict
-from pymongo import MongoClient
 import os
 import hashlib, uuid
 from datetime import datetime
@@ -33,10 +32,10 @@ origins = ['*']
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
+    allow_origins = origins,
+    allow_credentials = True,
+    allow_methods = ['*'],
+    allow_headers = ['*'],
 )
 
 ##################################################
@@ -259,7 +258,7 @@ def generate_history_id():
 # root
 @app.get('/')
 def read_root():
-    return "Hello World"
+    return { "Hello": "World" }
 
 # user signup
 @app.post('/signup', tags=['Users'])   
@@ -408,6 +407,7 @@ def get_lock_location( userId: str ):
             "dataList": ["Home", "Office"],
         }
     '''
+
     # connect to database
     collection = db['Users']
 
