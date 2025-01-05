@@ -19,7 +19,7 @@ class UserSignup( BaseModel ):
     password: str
     firstName: str
     lastName: str
-    userImage: str
+    userImage: Optional[str] = None
 
 # class for history
 class History( BaseModel ):
@@ -112,20 +112,11 @@ class Warning( BaseModel ):
     securityStatus: str
     message: str
 
-# # class for notification
-# # NOTE: should it be have??? or 1. seperate to request invite warning 2. everything collect in notofication but seperate by mode
-# class Notification( BaseModel ):
-#     notiId: int
-#     mode: str
-#     datetime: datetime
-#     subMode: str
-#     amount: int
-#     type: str
-#     userId: str
-#     userRole: str
-#     lockId: str
-#     lockLocation: str
-#     lockName: str
+# class for new warning
+class NewWarning( BaseModel ):
+    userId: str
+    userRole: Optional[str] = None
+    lockId: str
 
 # class for guest
 class Guest( BaseModel ):

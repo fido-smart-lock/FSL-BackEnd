@@ -286,6 +286,10 @@ def signup( usersignup: UserSignup ):
     salt = uuid.uuid4().hex
     password_hash = hash_password( usersignup.password, salt )
 
+    # change first name and last name to uppercase in first letter
+    usersignup.firstName = usersignup.firstName.capitalize()
+    usersignup.lastName = usersignup.lastName.capitalize()
+
     # create new user
     newUser = User(
         firstName = usersignup.firstName, 
@@ -295,7 +299,7 @@ def signup( usersignup: UserSignup ):
         salt = salt,
         userId = userId,
         userCode = userCode,
-        userImage = usersignup.userImage,
+        userImage = usersignup.userImage if usersignup.userImage else None,
         lockLocationList = [],
         admin = [],
         member = [],
@@ -2135,6 +2139,10 @@ def user_edit_profile( user_edit_profile: UserEditProfile ):
     user = collection.find_one( { 'userId': user_edit_profile.userId }, { '_id': 0 } )
     if not user:
         raise HTTPException( status_code = 404, detail = "User not found" )
+    
+    # change first name and last name to uppercase in first letter
+    user_edit_profile.newFirstName = user_edit_profile.newFirstName.capitalize()
+    user_edit_profile.newLastName = user_edit_profile.newLastName.capitalize()
 
     # update user detail
     collection.update_one( { 'userId': user_edit_profile.userId }, { '$set': 
@@ -2182,3 +2190,73 @@ def user_change_password( user_change_password: UserChangePassword ):
     collection.update_one( { 'userId': user_change_password.userId }, { '$set': { 'userPassword': user_change_password.newPassword } } )
 
     return { 'userId': user_change_password.userId, 'message': 'Change password successfully' }
+
+# # new warning
+# @app.post('/postWarning', tags=['Post Warning'])
+# def post_warning( new_warning: NewWarning ):
+#     '''
+#         post warning by append warning to lock warning list
+#         change lock status to warning
+#         post history and add history to lock
+#         input: lockId (str) and warning message (str)
+#         output: dict of warning
+#         for example:
+#         {
+#             "lockId": "12345",
+#             "warningId": "warn01",
+#             "message": "Post warning successfully"
+#         }
+#     '''
+
+#     # connect to database
+#     lockCollection = db['Locks']
+#     warningCollection = db['Warning']
+#     hisCollection = db['History']
+
+#     # get lock by lockId
+#     lock = lockCollection.find_one( { 'lockId': post_warning.lockId }, { '_id': 0 } )
+#     if not lock:
+#         raise HTTPException( status_code = 404, detail = "Lock not found" )
+
+#     # generate new warning id
+#     warningId = generate_warning_id()
+
+#     # create new warning
+#     newWarning = Warning(
+#         warningId = warningId,
+#         lockId = post_warning.lockId,
+#         message = post_warning.message,
+#         datetime = datetime.now(),
+#     )
+
+#     # add new warning to database
+#     warningCollection.insert_one( newWarning.dict() )
+
+#     # add new warning to lock
+#     # NOTE: add new warning to lock by append new warning to warning list
+#     lockCollection.update_one( { 'lockId': post_warning.lockId }, { '$push': { 'warning': warningId } } )
+
+#     # status = 'warning' when warning in lock is less than 3
+#     lockStatus = 'warning' if len( lock['warning'] ) < 3 else 'risk'
+
+#     # change lock status to warning
+#     lockCollection.update_one( { 'lockId': post_warning.lockId }, { '$set': { 'lockStatus': lockStatus } } )
+
+#     # create new history
+#     # NOTE: create new history with status = warning
+#     newHistory = History(
+#         hisId = generate_history_id(),
+#         userId = None,
+#         lockId = post_warning.lockId,
+#         status = 'risk',
+#         datetime = datetime.now(),
+#     )
+
+#     # add new history to database
+#     hisCollection.insert_one( newHistory.dict() )
+
+#     # add new history to lock
+#     # NOTE: add new history to lock by append new history to history list
+#     lockCollection.update_one( { 'lockId': post_warning.lockId }, { '$push': { 'history': newHistory.hisId } } )
+
+#     return { 'lockId': post_warning.lockId, 'warningId': warningId, 'message': 'Post warning successfully' }
