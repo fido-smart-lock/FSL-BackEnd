@@ -6,7 +6,7 @@ from typing import List, Dict
 import os
 import hashlib, uuid
 from datetime import datetime
-from database import User, Lock, History, Request, UserSignup, NewLock, NewRequest, NewInvitation, Invitation, Other, Connection, Warning, UserEditProfile, Guest, LockDetail, AcceptRequest, AcceptInvitation
+from database import User, Lock, History, Request, UserSignup, NewLock, NewRequest, NewInvitation, Invitation, Other, Connection, Warning, UserEditProfile, Guest, LockDetail, AcceptRequest, AcceptInvitation, AcceptAllRequest, UserChangePassword
 import random
 import uvicorn
 
@@ -650,7 +650,7 @@ def get_user_by_lockId_role( lockId: str, role: str ):
         if role == 'guest':
             guest = userIdStr
             user = userCollection.find_one( { 'userId': guest['userId'] }, { '_id': 0 } )
-            datetime = guest['expirationDatetime']
+            datetime = guest['expireDatetime']
         else:
             user = userCollection.find_one( { 'userId': userIdStr }, { '_id': 0 } )
             datetime = None
@@ -1370,6 +1370,8 @@ def get_other_notification_list( userId: str ):
     otherCollection = db['Other']
     lockCollection = db['Locks']
     userCollection = db['Users']
+    requestCollection = db['Request']
+    inviteCollection = db['Invitation']
 
     # get other by userId
     others = list( otherCollection.find( { 'userId': userId }, { '_id': 0 } ) )
@@ -1379,32 +1381,49 @@ def get_other_notification_list( userId: str ):
 
     for other in others:
         user = userCollection.find_one( { 'userId': other['userId'] }, { '_id': 0 } )
-
-        # find lock detail from user admin or member or guest
-        lockDetail = userCollection.find_one( { 'userId': userId, 'admin': { '$elemMatch': { 'lockId': other['lockId'] } } }, { '_id': 0, 'admin.$': 1 } )
-        if not lockDetail:
-            lockDetail = userCollection.find_one( { 'userId': userId, 'member': { '$elemMatch': { 'lockId': other['lockId'] } } }, { '_id': 0, 'member.$': 1 } )
+        print('other',other)
+        if other['subMode'] == 'sent' or other['subMode'] == 'accepted':
+            
+            # find request/invite that match with userId and lockId
+            lockDetail = requestCollection.find_one( { 'userId': userId, 'lockId': other['lockId'] }, { '_id': 0 } )
             if not lockDetail:
-                lockDetail = userCollection.find_one( { 'userId': userId, 'guest': { '$elemMatch': { 'lockId': other['lockId'] } } }, { '_id': 0, 'guest.$': 1 } )
-                if not lockDetail:
-                    raise HTTPException( status_code = 403, detail = "User is not in lock" )
-                
-        lockDetail = lockDetail['admin'][0] if 'admin' in lockDetail else lockDetail['member'][0] if 'member' in lockDetail else lockDetail['guest'][0]
-
-        otherList.append(
-            {
-                'notiId': other['otherId'],
-                'dateTime': other['datetime'],
-                'subMode': other['subMode'],
-                'amount': None,
-                'lockId': other['lockId'],
-                'lockLocation': lockDetail['lockLocation'],
-                'lockName': lockDetail['lockName'],
-                'userName': user['firstName'],
-                'userSurname': user['lastName'],
-                'role': other['userRole'],
-            }
-        )
+                invite = inviteCollection.find_one( { 'desUserId': userId, 'lockId': other['lockId'] }, { '_id': 0 } )
+                lockDetail = userCollection.find_one( { 'userId': invite['srcUserId'], 'admin': { '$elemMatch': { 'lockId': other['lockId'] } } }, { '_id': 0, 'admin.$': 1 } )
+                lockDetail = lockDetail['admin'][0] 
+            print(lockDetail)
+            otherList.append(
+                {
+                    'notiId': other['otherId'],
+                    'dateTime': other['datetime'],
+                    'subMode': other['subMode'],
+                    'amount': None,
+                    'lockId': other['lockId'],
+                    'lockLocation': lockDetail['lockLocation'],
+                    'lockName': lockDetail['lockName'],
+                    'userName': None,
+                    'userSurname': None,
+                    'role': None,
+                }
+            )
+        
+        if other['subMode'] == 'invite':
+            invite = inviteCollection.find_one( { 'desUserId': other['userId'], 'lockId': other['lockId'] }, { '_id': 0 } )
+            srcUser = userCollection.find_one( { 'userId': invite['srcUserId'] }, { '_id': 0 } )
+            srcLockDetail = userCollection.find_one( { 'userId': invite['srcUserId'], 'admin': { '$elemMatch': { 'lockId': other['lockId'] } } }, { '_id': 0, 'admin.$': 1 } )
+            otherList.append(
+                {
+                    'notiId': other['otherId'],
+                    'dateTime': other['datetime'],
+                    'subMode': other['subMode'],
+                    'amount': None,
+                    'lockId': other['lockId'],
+                    'lockLocation': srcLockDetail['lockLocation'],
+                    'lockName': srcLockDetail['lockName'],
+                    'userName': srcUser['firstName'],
+                    'userSurname': srcUser['lastName'],
+                    'role': other['userRole'],
+                }
+            )
 
     notificationList = {
         'userId': userId,
@@ -1809,8 +1828,8 @@ def accept_request( accept_request: AcceptRequest ):
     return { 'reqId': accept_request.reqId, 'message': 'Accept request successfully' }
 
 # accept all request
-@app.put('/acceptAllRequest/{lockId}', tags=['Accept Request'])
-def accept_all_request(  lockId: str = None ):
+@app.put('/acceptAllRequest', tags=['Accept Request'])
+def accept_all_request( accept_all_request: AcceptAllRequest ):
     '''
         accept all request by using function accept_request
         input: lockId (str)
@@ -1826,13 +1845,17 @@ def accept_all_request(  lockId: str = None ):
     collection = db['Request']
 
     # get all request by lockId
-    requests = list( collection.find( { 'lockId': lockId }, { '_id': 0 } ) )
+    requests = list( collection.find( { 'lockId': accept_all_request.lockId }, { '_id': 0 } ) )
 
     # accept all request by using function accept_request
     for request in requests:
-        accept_request( request['reqId'], request['expireDatetime'] )
+        acceptRequest = AcceptRequest(
+            reqId = request['reqId'],
+            expireDatetime = accept_all_request.expireDatetime
+        )
+        accept_request( acceptRequest )
 
-    return { 'lockId': lockId, 'message': 'All request have been accepted' }
+    return { 'lockId': accept_all_request.lockId, 'message': 'All request have been accepted' }
 
 # decline request
 @app.put('/declineRequest/{reqId}', tags=['Decline Request'])
@@ -2090,7 +2113,7 @@ def get_user_detail( userId: str ):
     return userDetail
 
 # user edit profile
-@app.put('/user/editProfile/{userId}', tags=['Edit Profile'])
+@app.put('/user/editProfile', tags=['Edit Profile'])
 def user_edit_profile( user_edit_profile: UserEditProfile ):
     '''
         edit user profile by update user detail
@@ -2118,18 +2141,18 @@ def user_edit_profile( user_edit_profile: UserEditProfile ):
     # update user detail
     collection.update_one( { 'userId': user_edit_profile.userId }, { '$set': 
         { 
-            'email': user_edit_profile['newEmail'] if user_edit_profile['newEmail'] else user['email'], 
-            'firstName': user_edit_profile['newFistName'] if user_edit_profile['newFistName'] else user['firstName'], 
-            'lastName': user_edit_profile['newLastName'] if user_edit_profile['newLastName'] else user['lastName'],
-            'userImage': user_edit_profile['newImage'] if user_edit_profile['newImage'] else user['userImage'],
+            'email': user_edit_profile.newEmail if user_edit_profile.newEmail else user['email'], 
+            'firstName': user_edit_profile.newFirstName if user_edit_profile.newFirstName else user['firstName'], 
+            'lastName': user_edit_profile.newLastName if user_edit_profile.newLastName else user['lastName'],
+            'userImage': user_edit_profile.newImage if user_edit_profile.newImage else user['userImage'],
         } 
     } )
 
     return { 'userId': user_edit_profile.userId, 'message': 'Edit user profile successfully' }
 
 # user change password
-@app.put('/user/changePassword/{userId}', tags=['Change Password'])
-def user_change_password( userId: str, currentPassword: str, newPassword: str ):
+@app.put('/user/changePassword', tags=['Change Password'])
+def user_change_password( user_change_password: UserChangePassword ):
     '''
         change user password by update user password
         input: userId (str), currentPassword (str) and newPassword (str)
@@ -2151,13 +2174,13 @@ def user_change_password( userId: str, currentPassword: str, newPassword: str ):
         raise HTTPException( status_code = 404, detail = "User not found" )
     
     # get current password hash from 
-    current_password_hash = hash_password( currentPassword, user['salt'] )
+    current_password_hash = hash_password( user_change_password.currentPassword, user['salt'] )
 
     # check current password
     if user['password_hash'] != current_password_hash:
         raise HTTPException( status_code = 403, detail = "Current password doesn’t match" )
 
     # update user password
-    collection.update_one( { 'userId': userId }, { '$set': { 'userPassword': newPassword } } )
+    collection.update_one( { 'userId': user_change_password.userId }, { '$set': { 'userPassword': user_change_password.newPassword } } )
 
-    return { 'userId': userId, 'message': 'Change password successfully' }
+    return { 'userId': user_change_password.userId, 'message': 'Change password successfully' }

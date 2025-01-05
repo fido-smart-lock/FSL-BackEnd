@@ -53,6 +53,11 @@ class AcceptRequest( BaseModel ):
     reqId: str
     expireDatetime: datetime
 
+# class for accept request
+class AcceptAllRequest( BaseModel ):
+    lockId: str
+    expireDatetime: datetime
+
 # class for new invitation
 class NewInvitation( BaseModel ):
     srcUserId: str
@@ -181,3 +186,9 @@ class UserEditProfile( BaseModel ):
     newFirstName: Optional[str] = None
     newLastName: Optional[str] = None
     newImage: Optional[str] = None
+
+# class for user change password
+class UserChangePassword( BaseModel ):
+    userId: str
+    currentPassword: str
+    newPassword: str
