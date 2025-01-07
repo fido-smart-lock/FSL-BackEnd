@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import os
 import hashlib, uuid
 from datetime import datetime
-from database import User, Lock, History, Request, UserSignup, NewLock, NewRequest, NewInvitation, Invitation, Other, Connection, Warning, UserEditProfile, Guest, LockDetail, AcceptRequest, AcceptInvitation, AcceptAllRequest, UserChangePassword
+from database import User, Lock, History, Request, UserSignup, NewLock, NewRequest, NewInvitation, Invitation, Other, Connection, Warning, UserEditProfile, Guest, LockDetail, AcceptRequest, AcceptInvitation, AcceptAllRequest, UserChangePassword, DeleteUserFromLock, NewWarning, DeleteLockFromUser, EditLock
 import random
 
 app = FastAPI()
@@ -386,7 +386,7 @@ def get_admin_lock( lockId: str ):
         'dataList': [
             {
                 'userCode': user['userCode'],
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
                 'userId': user['userId'],
                 'userName': user['firstName'],
                 'userSurname': user['lastName'],
@@ -482,7 +482,7 @@ def get_user_lock( userId: str, lockLocationActiveStr: str = None):
         if lockLocationActiveStr == lockDetail['lockLocation']:
             dataList.append( {
                 'lockId': lockDetail['lockId'],
-                'lockImage': lockDetail['lockImage'],
+                'lockImage': lockDetail['lockImage'] if lockDetail['lockImage'] else None,
                 'lockName': lockDetail['lockName'],
             } )
 
@@ -499,7 +499,7 @@ def get_user_lock( userId: str, lockLocationActiveStr: str = None):
     userLock = {
         'userId': user['userId'],
         'userName': user['firstName'],
-        'userImage': user['userImage'],
+        'userImage': user['userImage'] if user['userImage'] else None,
         'lockLocationList': lockLocationList,
         'lockLocationActive': lockLocationActiveStr,
         'dataList': dataList,
@@ -562,7 +562,7 @@ def get_lock_detail( lockId: str, userId: str ):
             dataList.append( {
                 'userId': user['userId'],
                 'userName': user['firstName'],
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
                 'role': 'admin'
             } )
 
@@ -573,7 +573,7 @@ def get_lock_detail( lockId: str, userId: str ):
             dataList.append( {
                 'userId': user['userId'],
                 'userName': user['firstName'],
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
                 'role': 'member'
             } )
 
@@ -584,7 +584,7 @@ def get_lock_detail( lockId: str, userId: str ):
             dataList.append( {
                 'userId': user['userId'],
                 'userName': user['firstName'],
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
                 'role': 'guest',
             } )
 
@@ -604,7 +604,7 @@ def get_lock_detail( lockId: str, userId: str ):
         'lockId': lockId,
         'lockName': lockDetail['lockName'],
         'lockLocation': lockDetail['lockLocation'],
-        'lockImage': lockDetail['lockImage'],
+        'lockImage': lockDetail['lockImage'] if lockDetail['lockImage'] else None,
         'securityStatus': lock['securityStatus'],
         'isAdmin': isAdmin,
         'dataList': dataList
@@ -661,7 +661,7 @@ def get_user_by_lockId_role( lockId: str, role: str ):
                 'userId': user['userId'],
                 'userName': user['firstName'],
                 'userSurname': user['lastName'],
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
                 'role': role,
                 'dateTime': datetime
             } )
@@ -713,7 +713,7 @@ def get_user_by_userCode( userCode: int ):
                 'userCode': user['userCode'],
                 'userName': user['firstName'],
                 'userSurname': user['lastName'],
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
             }
         ]
     }
@@ -795,9 +795,8 @@ def get_history_by_lockId( lockId: str ):
         history = historyCollection.find_one( { 'hisId': historyId }, { '_id': 0 } )
         if history:
             user = userCollection.find_one( { 'userId': history['userId'] }, { '_id': 0 } )
-            print('image',user['userImage'])
             dataList.append( {
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
                 'dateTime': history['datetime'],
                 'userName': user['firstName'] + ' ' + user['lastName'],
                 'status': history['status'],
@@ -853,15 +852,15 @@ def post_new_lock( new_lock: NewLock ):
     collection.insert_one( newLock.dict() )
 
     # update lock location list in user
-    # NOTE: add new lock location to lock location list
-    userCollection.update_one( { 'userId': new_lock.userId }, { '$push': { 'lockLocationList': new_lock.lockLocation } } )
+    # NOTE: add new lock location to lock location list if not exists
+    userCollection.update_one( { 'userId': new_lock.userId }, { '$addToSet': { 'lockLocationList': new_lock.lockLocation } } )
 
     # create lock detail
     newLockDetail = LockDetail(
         lockId = new_lock.lockId,
         lockName = new_lock.lockName,
         lockLocation = new_lock.lockLocation,
-        lockImage = new_lock.lockImage,
+        lockImage = new_lock.lockImage if new_lock.lockImage else None,
     )
     
     # add new lock to admin by append new lock detail to list
@@ -907,7 +906,7 @@ def post_new_request( new_request: NewRequest ):
         lockId = new_request.lockId,
         lockName = new_request.lockName,
         lockLocation = new_request.lockLocation,
-        lockImage = new_request.lockImage,
+        lockImage = new_request.lockImage if new_request.lockImage else None,
         userId = new_request.userId,
         requestStatus = 'sent',
         datetime = datetime.now(),
@@ -1586,6 +1585,7 @@ def get_warning_view_notification_list( userId: str, lockId: str ):
         warning = warningCollection.find_one( { 'warningId': warningId }, { '_id': 0 } )
         warningList.append(
             {
+                'notiId': warning['warningId'],
                 'dateTime': warning['datetime'],
                 'amount': None,
                 'lockId': lockId,
@@ -1637,7 +1637,7 @@ def delete_warning_notification( lockId: str, notiId: str = None ):
     # in case notiId is not None
     else:
         # delete warningId of warning list of lock
-        lockCollection.update_one( { 'lockId': lockId }, { '$pull': { 'warning': { 'reqId': notiId } } } )
+        lockCollection.update_one( { 'lockId': lockId }, { '$pull': { 'warning': notiId } } )
 
         return { 'notiId': notiId, 'lockId': lockId, 'message': 'Delete notification successfully' }
 
@@ -1750,7 +1750,7 @@ def accept_request( accept_request: AcceptRequest ):
         lockId = request['lockId'],
         lockName = request['lockName'],
         lockLocation = request['lockLocation'],
-        lockImage = request['lockImage'],
+        lockImage = request['lockImage'] if request['lockImage'] else None,
         expireDatetime = accept_request.expireDatetime.isoformat(),
     )
 
@@ -1761,8 +1761,9 @@ def accept_request( accept_request: AcceptRequest ):
     userCollection.update_one( { 'userId': request['userId'] }, { '$push': { 'guest': newGuest.dict() } } )
 
     # add location to lock location list in user
-    # NOTE: add location to lock location list
-    userCollection.update_one( { 'userId': request['userId'] }, { '$push': { 'lockLocationList': request['lockLocation'] } } )
+    # NOTE: add location to lock location list if not exists
+    if request['lockLocation'] not in userCollection.find_one( { 'userId': request['userId'] }, { '_id': 0 } )['lockLocationList']:
+        userCollection.update_one( { 'userId': request['userId'] }, { '$push': { 'lockLocationList': request['lockLocation'] } } )
 
     # generate new connect id
     connectId = generate_connect_id()
@@ -1926,13 +1927,15 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
     otherCollection = db['Other']
     hisCollection = db['History']
 
+    other = otherCollection.find_one( { 'otherId': accept_invitation.otherId }, { '_id': 0 } )
+
     # get invitation by invId
-    invitation = inviteCollection.find_one( { 'invId': accept_invitation.invId }, { '_id': 0 } )
+    invitation = inviteCollection.find_one( { 'desUserId': other['userId'], 'lockId': other['lockId'], 'role': other['userRole'] }, { '_id': 0 } )
     if not invitation:
         raise HTTPException( status_code = 404, detail = "Invitation not found" )
 
     # update invitation status to accepted
-    inviteCollection.update_one( { 'invId': accept_invitation.invId }, { '$set': { 'invStatus': 'accepted' } } )
+    inviteCollection.update_one( { 'invId': invitation['invId'] }, { '$set': { 'invStatus': 'accepted' } } )
 
     # in case role is admin or member
     if invitation['role'] == 'admin' or invitation['role'] == 'member':
@@ -1941,7 +1944,7 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
             lockId = invitation['lockId'],
             lockName = accept_invitation.lockName,
             lockLocation = accept_invitation.lockLocation,
-            lockImage = accept_invitation.lockImage,
+            lockImage = accept_invitation.lockImage if accept_invitation.lockImage else None,
         )
 
         # add user to lock
@@ -1957,7 +1960,7 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
             lockId = invitation['lockId'],
             lockName = accept_invitation.lockName,
             lockLocation = accept_invitation.lockLocation,
-            lockImage = accept_invitation.lockImage,
+            lockImage = accept_invitation.lockImage if accept_invitation.lockImage else None,
             datetime = invitation['datetime']
         )
 
@@ -1967,8 +1970,8 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
         userCollection.update_one( { 'userId': invitation['desUserId'] }, { '$push': { 'guest': newGuest.dict() } } )
 
     # add location to lock location list in user
-    # NOTE: add location to lock location list
-    userCollection.update_one( { 'userId': invitation['desUserId'] }, { '$push': { 'lockLocationList': accept_invitation.lockLocation } } )
+    # NOTE: add location to lock location list if not in list
+    userCollection.update_one( { 'userId': invitation['desUserId'] }, { '$addToSet': { 'lockLocationList': accept_invitation.lockLocation } } )
 
     # generate new connect id
     connectId = generate_connect_id()
@@ -2028,12 +2031,12 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
 
     # delete invitation from lock
     # NOTE: delete invitation from lock by pull invitation from invitation list
-    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$pull': { 'invitation': accept_invitation.invId } } )
+    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$pull': { 'invitation': invitation['invId'] } } )
 
     # delete other that match with desUserId, userRole and lockId
-    otherCollection.delete_one( { 'userId': invitation['desUserId'], 'userRole': invitation['role'], 'lockId': invitation['lockId'], 'subMode': 'invite' }, { '_id': 0 } )
+    otherCollection.delete_one( { 'userId': invitation['desUserId'], 'userRole': invitation['role'], 'lockId': invitation['lockId'], 'subMode': 'invite' } )
 
-    return { 'invId': accept_invitation.invId, 'message': 'Accept invitation successfully' }
+    return { 'invId': invitation['invId'], 'message': 'Accept invitation successfully' }
 
 # decline invitation
 @app.put('/declineInvitation/{invId}', tags=['Decline Invitation'])
@@ -2069,7 +2072,7 @@ def decline_invitation( invId: str ):
     lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$pull': { 'invitation': invId } } )
 
     # delete other that match with desUserId, userRole and lockId
-    otherCollection.delete_one( { 'userId': invitation['desUserId'], 'userRole': invitation['role'], 'lockId': invitation['lockId'], 'subMode': 'invite' }, { '_id': 0 } )
+    otherCollection.delete_one( { 'userId': invitation['desUserId'], 'userRole': invitation['role'], 'lockId': invitation['lockId'], 'subMode': 'invite' } )
 
     return { 'invId': invId, 'message': 'Decline invitation successfully' }
 
@@ -2108,7 +2111,7 @@ def get_user_detail( userId: str ):
         'userName': user['firstName'],
         'userSurname': user['lastName'],
         'userEmail': user['email'],
-        'userImage': user['userImage'],
+        'userImage': user['userImage'] if user['userImage'] else None,
         'isEmailVerified': False,
     }
     
@@ -2191,72 +2194,273 @@ def user_change_password( user_change_password: UserChangePassword ):
 
     return { 'userId': user_change_password.userId, 'message': 'Change password successfully' }
 
-# # new warning
-# @app.post('/postWarning', tags=['Post Warning'])
-# def post_warning( new_warning: NewWarning ):
-#     '''
-#         post warning by append warning to lock warning list
-#         change lock status to warning
-#         post history and add history to lock
-#         input: lockId (str) and warning message (str)
-#         output: dict of warning
-#         for example:
-#         {
-#             "lockId": "12345",
-#             "warningId": "warn01",
-#             "message": "Post warning successfully"
-#         }
-#     '''
+# new warning
+@app.post('/newWarning', tags=['New Warning'])
+def post_new_warning( new_warning: NewWarning ):
+    '''
+        post warning by append warning to lock warning list
+        change lock status to warning
+        post history and add history to lock
+        input: lockId (str) and warning message (str)
+        output: dict of warning
+        for example:
+        {
+            "lockId": "12345",
+            "warningId": "warn01",
+            "message": "Post warning successfully"
+        }
+    '''
 
-#     # connect to database
-#     lockCollection = db['Locks']
-#     warningCollection = db['Warning']
-#     hisCollection = db['History']
+    # connect to database
+    lockCollection = db['Locks']
+    warningCollection = db['Warning']
+    hisCollection = db['History']
 
-#     # get lock by lockId
-#     lock = lockCollection.find_one( { 'lockId': post_warning.lockId }, { '_id': 0 } )
-#     if not lock:
-#         raise HTTPException( status_code = 404, detail = "Lock not found" )
+    # get lock by lockId
+    lock = lockCollection.find_one( { 'lockId': new_warning.lockId }, { '_id': 0 } )
+    if not lock:
+        raise HTTPException( status_code = 404, detail = "Lock not found" )
 
-#     # generate new warning id
-#     warningId = generate_warning_id()
+    # generate new warning id
+    warningId = generate_warning_id()
 
-#     # create new warning
-#     newWarning = Warning(
-#         warningId = warningId,
-#         lockId = post_warning.lockId,
-#         message = post_warning.message,
-#         datetime = datetime.now(),
-#     )
+    message = None
 
-#     # add new warning to database
-#     warningCollection.insert_one( newWarning.dict() )
+    # create new warning
+    newWarning = Warning(
+        warningId = warningId,
+        userId = new_warning.userId,
+        lockId = new_warning.lockId,
+        message = message,
+        datetime = datetime.now(),
+    )
 
-#     # add new warning to lock
-#     # NOTE: add new warning to lock by append new warning to warning list
-#     lockCollection.update_one( { 'lockId': post_warning.lockId }, { '$push': { 'warning': warningId } } )
+    # add new warning to database
+    warningCollection.insert_one( newWarning.dict() )
 
-#     # status = 'warning' when warning in lock is less than 3
-#     lockStatus = 'warning' if len( lock['warning'] ) < 3 else 'risk'
+    # add new warning to lock
+    # NOTE: add new warning to lock by append new warning to warning list
+    lockCollection.update_one( { 'lockId': post_warning.lockId }, { '$push': { 'warning': warningId } } )
 
-#     # change lock status to warning
-#     lockCollection.update_one( { 'lockId': post_warning.lockId }, { '$set': { 'lockStatus': lockStatus } } )
+    # status = 'warning' when warning in lock is less than 3
+    lockStatus = 'warning' if len( lock['warning'] ) < 3 else 'risk'
 
-#     # create new history
-#     # NOTE: create new history with status = warning
-#     newHistory = History(
-#         hisId = generate_history_id(),
-#         userId = None,
-#         lockId = post_warning.lockId,
-#         status = 'risk',
-#         datetime = datetime.now(),
-#     )
+    # change lock status to warning
+    lockCollection.update_one( { 'lockId': post_warning.lockId }, { '$set': { 'lockStatus': lockStatus } } )
 
-#     # add new history to database
-#     hisCollection.insert_one( newHistory.dict() )
+    # create new history
+    # NOTE: create new history with status = warning
+    newHistory = History(
+        hisId = generate_history_id(),
+        userId = None,
+        lockId = post_warning.lockId,
+        status = 'risk',
+        datetime = datetime.now(),
+    )
 
-#     # add new history to lock
-#     # NOTE: add new history to lock by append new history to history list
-#     lockCollection.update_one( { 'lockId': post_warning.lockId }, { '$push': { 'history': newHistory.hisId } } )
+    # add new history to database
+    hisCollection.insert_one( newHistory.dict() )
 
-#     return { 'lockId': post_warning.lockId, 'warningId': warningId, 'message': 'Post warning successfully' }
+    # add new history to lock
+    # NOTE: add new history to lock by append new history to history list
+    lockCollection.update_one( { 'lockId': post_warning.lockId }, { '$push': { 'history': newHistory.hisId } } )
+
+    return { 'lockId': post_warning.lockId, 'warningId': warningId, 'message': 'Post warning successfully' }
+
+# delete user in lock
+@app.delete('/deleteUserFromLock', tags=['User Setting'])
+def delete_user_from_lock( delete_user_from_lock: DeleteUserFromLock ):
+    '''
+        delete user in lock by pull user from lock
+        delete lock from user by pull lock id from user
+        delete location from lock location list of user
+        post other if userRole is admin 
+        input: userId (str) and lockId (str)
+        output: dict of user detail
+        for example:
+        {
+            "userId": "js7694",
+            "lockId": "12345",
+            "message": "Delete user successfully"
+        }
+    '''
+
+    # connect to database
+    lockCollection = db['Locks']
+    userCollection = db['Users']
+    otherCollection = db['Other']
+
+    # get lock by lockId
+    lock = lockCollection.find_one( { 'lockId': delete_user_from_lock.lockId }, { '_id': 0 } )
+    if not lock:
+        raise HTTPException( status_code = 404, detail = "Lock not found" )
+
+    # get user by userId
+    user = userCollection.find_one( { 'userId': delete_user_from_lock.userId }, { '_id': 0 } )
+    if not user:
+        raise HTTPException( status_code = 404, detail = "User not found" )
+
+    # in case userRole is admin
+    if delete_user_from_lock.userRole == 'admin':
+        # generate new other id
+        otherId = generate_other_id()
+
+        # create new other
+        # NOTE: create new other with subMode = delete
+        newOther = Other(
+            otherId = otherId,
+            subMode = 'removal',
+            amount = None,
+            userId = delete_user_from_lock.userId,
+            userRole = 'admin',
+            lockId = delete_user_from_lock.lockId,
+            datetime = datetime.now(),
+        )
+
+        # add new other to database
+        otherCollection.insert_one( newOther.dict() )
+
+    else:
+        # delete user from lock
+        # NOTE: delete user from lock by pull user from userRole list
+        lockCollection.update_one( { 'lockId': delete_user_from_lock.lockId }, { '$pull': { delete_user_from_lock.userRole: delete_user_from_lock.userId } } )
+
+        # delete lock from user
+        # NOTE: delete lock from user by pull lock detail from lock list
+        userCollection.update_one( { 'userId': delete_user_from_lock.userId }, { '$pull': { delete_user_from_lock.userRole: { 'lockId': delete_user_from_lock.lockId } } } )
+    
+# accept removal
+@app.put('/acceptRemoval/{otherId}', tags=['Accept Removal'])
+def accept_removal( otherId: str ):
+    '''
+        accept removal by delete user from lock
+        delete lock from user
+        delete location from lock location list of user
+        input: otherId (str)
+        output: dict of user detail
+        for example:
+        {
+            "userId": "js7694",
+            "lockId": "12345",
+            "message": "Accept removal successfully"
+        }
+    '''
+
+    # connect to database
+    lockCollection = db['Locks']
+    userCollection = db['Users']
+    otherCollection = db['Other']
+
+    # get other by otherId
+    other = otherCollection.find_one( { 'otherId': otherId }, { '_id': 0 } )
+
+    # delete user from lock
+    # NOTE: delete user from lock by pull user from admin list
+    lockCollection.update_one( { 'lockId': other['lockId'] }, { '$pull': { 'admin': other['userId'] } } )
+
+    # get lock detail by userId
+    lockDetail = userCollection.find_one( { 'userId': other['userId'], 'admin': { '$elemMatch': { 'lockId': other['lockId'] } } }, { '_id': 0, 'admin.$': 1 } )
+    lockDetail = lockDetail['admin'][0]
+
+    # delete lock from user
+    # NOTE: delete lock from user by pull lock detail from admin list
+    # NOTE: delete location from lock location list
+    userCollection.update_one( { 'userId': other['userId'] }, { '$pull': { 'admin': { 'lockId': other['lockId'] } } } )
+    userCollection.update_one( { 'userId': other['userId'] }, { '$pull': { 'lockLocationList': lockDetail['lockLocation'] } } )
+
+    # delete other
+    otherCollection.delete_one( { 'otherId': otherId } )
+
+    return { 'userId': other['userId'], 'lockId': other['lockId'], 'message': 'Accept removal successfully' }
+
+# decline removal
+@app.put('/declineRemoval/{otherId}', tags=['Decline Removal'])
+def decline_removal( otherId: str ):
+    '''
+        decline removal by delete other
+        input: otherId (str)
+        output: dict of user detail
+        for example:
+        {
+            "userId": "js7694",
+            "lockId": "12345",
+            "message": "Decline removal successfully"
+        }
+    '''
+
+    # connect to database
+    otherCollection = db['Other']
+
+    # delete other
+    otherCollection.delete_one( { 'otherId': otherId } )
+
+    return { 'message': 'Decline removal successfully' }
+
+# delete lock from user
+@app.delete('/deleteLockFromUser', tags=['User Setting'])
+def delete_lock_from_user( delete_lock_from_user: DeleteLockFromUser ):
+    '''
+        delete lock from user by pull lock detail from user
+        delete user from lock by pull user from lock
+        delete location from lock location list of user
+        input: userId (str) and lockId (str)
+        output: dict of user detail
+        for example:
+        {
+            "userId": "js7694",
+            "lockId": "12345",
+            "message": "Delete lock successfully"
+        }
+    '''
+
+    # connect to database
+    lockCollection = db['Locks']
+    userCollection = db['Users']
+    otherCollection = db['Other']
+
+    # get lock by lockId
+    lock = lockCollection.find_one( { 'lockId': delete_lock_from_user.lockId }, { '_id': 0 } )
+    if not lock:
+        raise HTTPException( status_code = 404, detail = "Lock not found" )
+
+    # get user by userId
+    user = userCollection.find_one( { 'userId': delete_lock_from_user.userId }, { '_id': 0 } )
+    if not user:
+        raise HTTPException( status_code = 404, detail = "User not found" )
+    
+    # get lck detail
+    lockDetail = userCollection.find_one( { 'userId': delete_lock_from_user.userId, 'admin': { '$elemMatch': { 'lockId': delete_lock_from_user.lockId } } }, { '_id': 0, 'admin.$': 1 } )
+    if not lockDetail:
+        lockDetail = userCollection.find_one( { 'userId': delete_lock_from_user.userId, 'member': { '$elemMatch': { 'lockId': delete_lock_from_user.lockId } } }, { '_id': 0, 'member.$': 1 } )
+        if not lockDetail:
+            lockDetail = userCollection.find_one( { 'userId': delete_lock_from_user.userId, 'guest': { '$elemMatch': { 'lockId': delete_lock_from_user.lockId } } }, { '_id': 0, 'guest.$': 1 } )
+            if not lockDetail:
+                raise HTTPException( status_code = 403, detail = "User is not in lock" )
+            
+    lockDetail = lockDetail['admin'][0] if 'admin' in lockDetail else lockDetail['member'][0] if 'member' in lockDetail else lockDetail['guest'][0]
+
+    # delete lock from user
+    # NOTE: delete lock from user by pull lock detail from admin list
+    # NOTE: delete location from lock location list
+    userCollection.update_one( { 'userId': delete_lock_from_user.userId }, { '$pull': { 'admin': { 'lockId': delete_lock_from_user.lockId } } } )
+    userCollection.update_one( { 'userId': delete_lock_from_user.userId }, { '$pull': { 'member': { 'lockId': delete_lock_from_user.lockId } } } )
+    userCollection.update_one( { 'userId': delete_lock_from_user.userId }, { '$pull': { 'guest': { 'lockId': delete_lock_from_user.lockId } } } )
+
+    lockLocationList = []
+
+    # get lock location list of user admin and member and guest
+    for userRole in ['admin', 'member', 'guest']:
+        for lockDetail in user[userRole]:
+            if lockDetail['lockId'] != delete_lock_from_user.lockId:
+                lockLocationList.append( lockDetail['lockLocation'] )
+
+    # delete lock location from user
+    # NOTE: delete location from lock location list if not in list
+    if not lockDetail['lockLocation'] in lockLocationList:
+        userCollection.update_one( { 'userId': delete_lock_from_user.userId }, { '$pull': { 'lockLocationList': lockDetail['lockLocation'] } } )
+
+    # delete user from lock
+    # NOTE: delete user from lock by pull user from userRole list
+    lockCollection.update_one( { 'lockId': delete_lock_from_user.lockId }, { '$pull': { 'admin': delete_lock_from_user.userId } } )
+    lockCollection.update_one( { 'lockId': delete_lock_from_user.lockId }, { '$pull': { 'member': delete_lock_from_user.userId } } )
+    lockCollection.update_one( { 'lockId': delete_lock_from_user.lockId }, { '$pull': { 'guest': delete_lock_from_user.userId } } )

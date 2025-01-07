@@ -36,7 +36,7 @@ class Request( BaseModel ):
     lockId: str
     lockName: str
     lockLocation: str
-    lockImage: str
+    lockImage: Optional[str] = None
     requestStatus: str
     datetime: datetime
 
@@ -46,7 +46,7 @@ class NewRequest( BaseModel ):
     lockId: str
     lockName: str
     lockLocation: str
-    lockImage: str
+    lockImage: Optional[str] = None
 
 # class for accept request
 class AcceptRequest( BaseModel ):
@@ -78,10 +78,10 @@ class Invitation( BaseModel ):
 
 # class for accept invitation
 class AcceptInvitation( BaseModel ):
-    invId: str
+    otherId: str
     lockName: str
     lockLocation: str
-    lockImage: str
+    lockImage: Optional[str] = None
 
 # class for connection
 class Connection( BaseModel ):
@@ -106,16 +106,16 @@ class Warning( BaseModel ):
     warningId: str
     # subMode: str
     userId: str
-    userRole: str
+    # userRole: str
     lockId: str
     datetime: datetime
-    securityStatus: str
+    # securityStatus: str
     message: str
 
 # class for new warning
 class NewWarning( BaseModel ):
     userId: str
-    userRole: Optional[str] = None
+    # userRole: Optional[str] = None
     lockId: str
 
 # class for guest
@@ -124,7 +124,7 @@ class Guest( BaseModel ):
     lockId: str
     lockName: str
     lockLocation: str
-    lockImage: str
+    lockImage: Optional[str] = None
     expireDatetime: datetime
 
 # class for new lock
@@ -133,7 +133,7 @@ class NewLock( BaseModel ):
     lockId: str
     lockName: str
     lockLocation: str
-    lockImage: str
+    lockImage: Optional[str] = None
 
 # class for locks
 class Lock( BaseModel ):
@@ -153,14 +153,14 @@ class LockDetail( BaseModel ):
     lockId: str
     lockName: str
     lockLocation: str
-    lockImage: str
+    lockImage: Optional[str] = None
 
 # class for users
 class User( BaseModel ):
     firstName: str
     lastName: str
     email: str
-    userImage: str
+    userImage: Optional[str] = None
     password_hash: str
     salt: str
     userId: str
@@ -183,3 +183,22 @@ class UserChangePassword( BaseModel ):
     userId: str
     currentPassword: str
     newPassword: str
+
+# class for delete user from lock
+class DeleteUserFromLock( BaseModel ):
+    userId: str
+    lockId: str
+    userRole: str
+
+# class for delete lock from user
+class DeleteLockFromUser( BaseModel ):
+    userId: str
+    lockId: str
+
+# class for edit lock detail
+class EditLock( BaseModel ):
+    userId: str
+    lockId: str
+    newLockName: Optional[str] = None
+    newLockLocation: Optional[str] = None
+    newLockImage: Optional[str] = None
