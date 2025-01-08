@@ -196,7 +196,7 @@ class DeleteLockFromUser( BaseModel ):
     lockId: str
 
 # class for edit lock detail
-class EditLock( BaseModel ):
+class EditLockDetail( BaseModel ):
     userId: str
     lockId: str
     newLockName: Optional[str] = None
