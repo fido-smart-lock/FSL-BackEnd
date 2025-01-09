@@ -78,7 +78,9 @@ class Invitation( BaseModel ):
 
 # class for accept invitation
 class AcceptInvitation( BaseModel ):
-    otherId: str
+    userId: str
+    lockId: str
+    userRole: str
     lockName: str
     lockLocation: str
     lockImage: Optional[str] = None
