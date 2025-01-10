@@ -574,6 +574,7 @@ def get_lock_detail( lockId: str, userId: str ):
     # connect to database
     lockCollection = db['Locks']
     userCollection = db['Users']
+    reqCollection = db['Request']
 
     # get lock
     lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
@@ -621,6 +622,18 @@ def get_lock_detail( lockId: str, userId: str ):
                 'userName': user['firstName'],
                 'userImage': user['userImage'] if user['userImage'] else None,
                 'role': 'guest',
+            } )
+
+    # loop for get request user
+    for requestId in lock['request']:
+        request = reqCollection.find_one( { 'reqId': requestId }, { '_id': 0 } )
+        user = userCollection.find_one( { 'userId': request['userId'] }, { '_id': 0 } )
+        if user:
+            dataList.append( {
+                'userId': user['userId'],
+                'userName': user['firstName'],
+                'userImage': user['userImage'] if user['userImage'] else None,
+                'role': 'req',
             } )
 
     # get lock detail in user admin or member or guest
@@ -842,6 +855,9 @@ def get_history_by_lockId( lockId: str ):
                 'userName': user['firstName'] + ' ' + user['lastName'],
                 'status': history['status'],
             } )
+
+    # order by datetime
+    dataList = sorted( dataList, key = lambda x: x['dateTime'], reverse = True )
     
     # get dict of history by lockId
     historyByLockId = {
@@ -1144,6 +1160,9 @@ def get_request_by_lockId( lockId: str ):
     # connect to database
     collection = db['Request']
     userCollection = db['Users']
+    
+    # check guest is expired before get lock
+    check_guest_expired( lockId )
 
     # get request by lockId
     dataList = list()
@@ -1263,6 +1282,10 @@ def get_request_notification_list( userId: str ):
 
     # get request in notification format
     for lockDetail in lockDetailList:
+
+        # check guest is expired before get lock
+        check_guest_expired( lockDetail['lockId'] )
+
         # get latest request of lock
         request = collection.find_one( { 'lockId': lockDetail['lockId'] }, sort = [ ( 'datetime', -1 ) ] )
         lock = lockCollection.find_one( { 'lockId': lockDetail['lockId'] }, { '_id': 0 } )
@@ -1361,19 +1384,13 @@ def get_connect_notification_list( userId: str ):
 
     # get connect in notification format
     for lockDetail in lockDetailList:
+
+        # check guest is expired before get lock
+        check_guest_expired( lockDetail['lockId'] )
+
         connects = list( conCollection.find( { 'lockId': lockDetail['lockId'] }, { '_id': 0 } ) )
         for connect in connects:
-            lockDetailCon = None
             userCon = userCollection.find_one( { 'userId': connect['userId'] }, { '_id': 0 } )
-            lockDetailCon = userCollection.find_one( { 'userId': userCon['userId'], 'admin': { '$elemMatch': { 'lockId': lockDetail['lockId'] } } }, { '_id': 0, 'admin.$': 1 } )
-            if not lockDetailCon:
-                lockDetailCon = userCollection.find_one( { 'userId': userCon['userId'], 'member': { '$elemMatch': { 'lockId': lockDetail['lockId'] } } }, { '_id': 0, 'member.$': 1 } )
-                if not lockDetailCon:
-                    lockDetailCon = userCollection.find_one( { 'userId': userCon['userId'], 'guest': { '$elemMatch': { 'lockId': lockDetail['lockId'] } } }, { '_id': 0, 'guest.$': 1 } )
-                    if not lockDetailCon:
-                        raise HTTPException( status_code = 403, detail = "User is not in lock" )
-                    
-            lockDetailCon = lockDetailCon['admin'][0] if 'admin' in lockDetailCon else lockDetailCon['member'][0] if 'member' in lockDetailCon else lockDetailCon['guest'][0]
             connectList.append(
                 {
                     'notiId': connect['conId'],
@@ -1381,8 +1398,8 @@ def get_connect_notification_list( userId: str ):
                     'subMode': None,
                     'amount': None,
                     'lockId': lockDetail['lockId'],
-                    'lockLocation': lockDetailCon['lockLocation'],
-                    'lockName': lockDetailCon['lockName'],
+                    'lockLocation': lockDetail['lockLocation'],
+                    'lockName': lockDetail['lockName'],
                     'userName': userCon['firstName'],
                     'userSurname': userCon['lastName'],
                     'role': None,
@@ -1491,7 +1508,9 @@ def get_other_notification_list( userId: str ):
     otherList = list()
 
     for other in others:
-        user = userCollection.find_one( { 'userId': other['userId'] }, { '_id': 0 } )
+        # check guest is expired before get lock
+        check_guest_expired( other['lockId'] )
+
         if other['subMode'] == 'sent' or other['subMode'] == 'accepted':
             
             # find request/invite that match with userId and lockId
@@ -1602,6 +1621,10 @@ def get_warning_main_notification_list( userId: str ):
 
     # get request in notification format
     for lockDetail in lockDetailList:
+
+        # check guest is expired before get lock
+        check_guest_expired( lockDetail['lockId'] )
+
         lock = lockCollection.find_one( { 'lockId': lockDetail['lockId'] }, { '_id': 0 } )
         latestWarning = warningCollection.find_one( { 'lockId': lockDetail['lockId'] }, { '_id': 0 } )
         if len( lock['warning'] ) > 0:
@@ -1666,6 +1689,9 @@ def get_warning_view_notification_list( userId: str, lockId: str ):
     warningCollection = db['Warning']
     lockCollection = db['Locks']
     userCollection = db['Users']
+
+    # check guest is expired before get lock
+    check_guest_expired( lockId )
 
     # get user
     user = userCollection.find_one( { 'userId': userId }, { '_id': 0 } )
@@ -1736,6 +1762,9 @@ def delete_warning_notification( lockId: str, notiId: str = None ):
     # connect to database
     lockCollection = db['Locks']
 
+    # check guest is expired before get lock
+    check_guest_expired( lockId )
+
     # delete warning notification of lock
     # in case notiId is None
     if not notiId:
@@ -1791,6 +1820,9 @@ def delete_invitation_notification( notiId: str ):
 
     # get invitation by notiId
     invitation = inviteCollection.find_one( { 'invId': notiId }, { '_id': 0 } )
+
+    # check guest is expired before get lock
+    check_guest_expired( invitation['lockId'] )
 
     # change status of invitation to declined
     inviteCollection.update_one( { 'invId': notiId }, { '$set': { 'invStatus': 'declined' } } )
@@ -1869,6 +1901,9 @@ def accept_request( accept_request: AcceptRequest ):
 
     # update expire datetime
     collection.update_one( { 'reqId': accept_request.reqId }, { '$set': { 'datetime': accept_request.expireDatetime } } )
+
+    # check guest is expired before get lock
+    check_guest_expired( request['lockId'] )
 
     # create new Guest
     newGuest = Guest(
@@ -1980,6 +2015,9 @@ def accept_all_request( accept_all_request: AcceptAllRequest ):
     # connect to database
     collection = db['Request']
 
+    # check guest is expired before get lock
+    check_guest_expired( accept_all_request.lockId )
+
     # get all request by lockId
     requests = list( collection.find( { 'lockId': accept_all_request.lockId }, { '_id': 0 } ) )
 
@@ -2018,6 +2056,9 @@ def decline_request( reqId: str ):
     request = collection.find_one( { 'reqId': reqId }, { '_id': 0 } )
     if not request:
         raise HTTPException( status_code = 404, detail = "Request not found" )
+    
+    # check guest is expired before get lock
+    check_guest_expired( request['lockId'] )
 
     # update request status to declined
     collection.update_one( { 'reqId': reqId }, { '$set': { 'requestStatus': 'declined' } } )
@@ -2065,6 +2106,9 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
     invitation = inviteCollection.find_one( { 'desUserId': accept_invitation.userId, 'lockId': accept_invitation.lockId, 'role': accept_invitation.userRole }, { '_id': 0 } )
     if not invitation:
         raise HTTPException( status_code = 404, detail = "Invitation not found" )
+    
+    # check guest is expired before get lock
+    check_guest_expired( invitation['lockId'] )
 
     # update invitation status to accepted
     inviteCollection.update_one( { 'invId': invitation['invId'] }, { '$set': { 'invStatus': 'accepted' } } )
@@ -2203,6 +2247,9 @@ def decline_invitation( otherId: str ):
 
     # get other by otherId
     other = otherCollection.find_one( { 'otherId': otherId }, { '_id': 0 } )
+
+    # check guest is expired before get lock
+    check_guest_expired( other['lockId'] )
 
     # get invitation by invId
     invitation = inviteCollection.find_one( { 'desUserId': other['userId'], 'lockId': other['lockId'], 'role': other['userRole'] }, { '_id': 0 } )
@@ -2361,6 +2408,9 @@ def post_new_warning( new_warning: NewWarning ):
     warningCollection = db['Warning']
     hisCollection = db['History']
 
+    # check guest is expired before get lock
+    check_guest_expired( new_warning.lockId )
+
     # get lock by lockId
     lock = lockCollection.find_one( { 'lockId': new_warning.lockId }, { '_id': 0 } )
     if not lock:
@@ -2442,6 +2492,9 @@ def delete_user_from_lock( delete_user_from_lock: DeleteUserFromLock ):
     userCollection = db['Users']
     otherCollection = db['Other']
 
+    # check guest is expired before get lock
+    check_guest_expired( delete_user_from_lock.lockId )
+
     # get lock by lockId
     lock = lockCollection.find_one( { 'lockId': delete_user_from_lock.lockId }, { '_id': 0 } )
     if not lock:
@@ -2472,6 +2525,8 @@ def delete_user_from_lock( delete_user_from_lock: DeleteUserFromLock ):
         # add new other to database
         otherCollection.insert_one( newOther.dict() )
 
+        return { 'userId': delete_user_from_lock.userId, 'lockId': delete_user_from_lock.lockId, 'message': 'Sent removal to user' }
+
     else:
         # delete user from lock
         # NOTE: delete user from lock by pull user from userRole list
@@ -2480,15 +2535,17 @@ def delete_user_from_lock( delete_user_from_lock: DeleteUserFromLock ):
         # delete lock from user
         # NOTE: delete lock from user by pull lock detail from lock list
         userCollection.update_one( { 'userId': delete_user_from_lock.userId }, { '$pull': { delete_user_from_lock.userRole: { 'lockId': delete_user_from_lock.lockId } } } )
+
+        return { 'userId': delete_user_from_lock.userId, 'lockId': delete_user_from_lock.lockId, 'message': 'Delete user successfully' }
     
 # accept removal
-@app.put('/acceptRemoval/{otherId}', tags=['Accept Removal'])
-def accept_removal( otherId: str ):
+@app.put('/acceptRemoval/{userId}/{lockId}', tags=['Accept Removal'])
+def accept_removal( userId: str, lockId: str ):
     '''
         accept removal by delete user from lock
         delete lock from user
         delete location from lock location list of user
-        input: otherId (str)
+        input: userId (str) and lockId (str)
         output: dict of user detail
         for example:
         {
@@ -2503,31 +2560,34 @@ def accept_removal( otherId: str ):
     userCollection = db['Users']
     otherCollection = db['Other']
 
-    # get other by otherId
-    other = otherCollection.find_one( { 'otherId': otherId }, { '_id': 0 } )
+    # get other by otherId by userId and lockId
+    other = otherCollection.find_one( { 'userId': userId, 'lockId': lockId, 'subMode': 'removal' }, { '_id': 0 } )
+
+    # check guest is expired before get lock
+    check_guest_expired( other['lockId'] )
 
     # delete user from lock
     # NOTE: delete user from lock by pull user from admin list
-    lockCollection.update_one( { 'lockId': other['lockId'] }, { '$pull': { 'admin': other['userId'] } } )
+    lockCollection.update_one( { 'lockId': lockId }, { '$pull': { 'admin': userId } } )
 
     # get lock detail by userId
-    lockDetail = userCollection.find_one( { 'userId': other['userId'], 'admin': { '$elemMatch': { 'lockId': other['lockId'] } } }, { '_id': 0, 'admin.$': 1 } )
+    lockDetail = userCollection.find_one( { 'userId': userId, 'admin': { '$elemMatch': { 'lockId': lockId } } }, { '_id': 0, 'admin.$': 1 } )
     lockDetail = lockDetail['admin'][0]
 
     # delete lock from user
     # NOTE: delete lock from user by pull lock detail from admin list
     # NOTE: delete location from lock location list
-    userCollection.update_one( { 'userId': other['userId'] }, { '$pull': { 'admin': { 'lockId': other['lockId'] } } } )
-    userCollection.update_one( { 'userId': other['userId'] }, { '$pull': { 'lockLocationList': lockDetail['lockLocation'] } } )
+    userCollection.update_one( { 'userId': userId }, { '$pull': { 'admin': { 'lockId': lockId } } } )
+    userCollection.update_one( { 'userId': userId }, { '$pull': { 'lockLocationList': lockDetail['lockLocation'] } } )
 
     # delete other
-    otherCollection.delete_one( { 'otherId': otherId } )
+    otherCollection.delete_one( { 'otherId': other['otherId'] } )
 
-    return { 'userId': other['userId'], 'lockId': other['lockId'], 'message': 'Accept removal successfully' }
+    return { 'userId': userId, 'lockId': lockId, 'message': 'Accept removal successfully' }
 
 # decline removal
-@app.delete('/declineRemoval/{otherId}', tags=['Decline Removal'])
-def decline_removal( otherId: str ):
+@app.delete('/declineRemoval/{userId}/{lockId}', tags=['Decline Removal'])
+def decline_removal( userId: str, lockId: str ):
     '''
         decline removal by delete other
         input: otherId (str)
@@ -2543,8 +2603,11 @@ def decline_removal( otherId: str ):
     # connect to database
     otherCollection = db['Other']
 
+    # get other by otherId by userId and lockId
+    other = otherCollection.find_one( { 'userId': userId, 'lockId': lockId, 'subMode': 'removal' }, { '_id': 0 } )
+
     # delete other
-    otherCollection.delete_one( { 'otherId': otherId } )
+    otherCollection.delete_one( { 'otherId': other['otherId'] } )
 
     return { 'message': 'Decline removal successfully' }
 
@@ -2569,6 +2632,9 @@ def delete_lock_from_user( delete_lock_from_user: DeleteLockFromUser ):
     lockCollection = db['Locks']
     userCollection = db['Users']
     otherCollection = db['Other']
+
+    # check guest is expired before get lock
+    check_guest_expired( delete_lock_from_user.lockId )
 
     # get lock by lockId
     lock = lockCollection.find_one( { 'lockId': delete_lock_from_user.lockId }, { '_id': 0 } )
@@ -2637,6 +2703,9 @@ def edit_lock_detail( edit_lock_detail: EditLockDetail ):
     # connect to database
     userCollection = db['Users']
 
+    # check guest is expired before get lock
+    check_guest_expired( edit_lock_detail.lockId )
+
     userRole = 'admin'
     # get lock detail by userId from admin or member or guest
     lockDetail = userCollection.find_one( { 'userId': edit_lock_detail.userId, 'admin': { '$elemMatch': { 'lockId': edit_lock_detail.lockId } } }, { '_id': 0, 'admin.$': 1 } )
@@ -2655,7 +2724,15 @@ def edit_lock_detail( edit_lock_detail: EditLockDetail ):
     # NOTE: update lock detail from user by set new lock detail
     # if userRole is admin and member
     if userRole == 'admin' or userRole == 'member':
-        userCollection.update_one( { 'userId': edit_lock_detail.userId, userRole+'.$': { 'lockId': edit_lock_detail.lockId } }, { '$set': { userRole+'.$': edit_lock_detail.dict() } } )
+
+        # create new lock detail
+        newLockDetail = LockDetail(
+            lockId = edit_lock_detail.lockId,
+            lockName = edit_lock_detail.newLockName if edit_lock_detail.newLockName else lockDetail['lockName'],
+            lockLocation = edit_lock_detail.newLockLocation if edit_lock_detail.newLockLocation else lockDetail['lockLocation'],
+            lockImage = edit_lock_detail.newLockImage if edit_lock_detail.newLockImage else lockDetail['lockImage'],
+        )
+        userCollection.update_one( { 'userId': edit_lock_detail.userId, userRole: { '$elemMatch': { 'lockId': edit_lock_detail.lockId } }  }, { '$set': { userRole+'.$': newLockDetail.dict() } } )
 
     # if userRole is guest
     else:
@@ -2712,6 +2789,9 @@ def check_lock( lockId: str ):
 
     # connect to database
     collection = db['Locks']
+
+    # check guest is expired before get lock
+    check_guest_expired( lockId )
 
     # get lock by lockId
     lock = collection.find_one( { 'lockId': lockId }, { '_id': 0 } )
