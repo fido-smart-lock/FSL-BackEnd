@@ -186,16 +186,15 @@ class UserChangePassword( BaseModel ):
     currentPassword: str
     newPassword: str
 
-# class for delete user from lock
-class DeleteUserFromLock( BaseModel ):
+# class for delete
+class Delete( BaseModel ):
     userId: str
     lockId: str
-    userRole: str
 
-# class for delete lock from user
-class DeleteLockFromUser( BaseModel ):
-    userId: str
-    lockId: str
+# # class for delete lock from user
+# class DeleteLockFromUser( BaseModel ):
+#     userId: str
+#     lockId: str
 
 # class for edit lock detail
 class EditLockDetail( BaseModel ):
