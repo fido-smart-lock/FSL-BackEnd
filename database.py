@@ -191,10 +191,10 @@ class Delete( BaseModel ):
     userId: str
     lockId: str
 
-# # class for delete lock from user
-# class DeleteLockFromUser( BaseModel ):
-#     userId: str
-#     lockId: str
+# class for delete lock location from user
+class DeleteLockLocation( BaseModel ):
+    userId: str
+    lockLocation: str
 
 # class for edit lock detail
 class EditLockDetail( BaseModel ):
