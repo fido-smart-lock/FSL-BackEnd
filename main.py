@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import os
 import hashlib, uuid
 from datetime import datetime
-from database import User, Lock, History, Request, UserSignup, NewLock, NewRequest, NewInvitation, Invitation, Other, Connection, Warning, UserEditProfile, Guest, LockDetail, AcceptRequest, AcceptInvitation, AcceptAllRequest, UserChangePassword
+from database import User, Lock, History, Request, UserSignup, NewLock, NewRequest, NewInvitation, Invitation, Other, Connection, Warning, UserEditProfile, Guest, LockDetail, AcceptRequest, AcceptInvitation, AcceptAllRequest, UserChangePassword, Delete, NewWarning, EditLockDetail, DeleteLockLocation
 import random
 
 app = FastAPI()
@@ -214,12 +214,12 @@ def generate_warning_id():
     collection = db['Warning']
 
     # Generate warning id
-    warningId = 'warning' + str( collection.count_documents( {} ) + 1 ).zfill( 5 )
+    warningId = 'warn' + str( collection.count_documents( {} ) + 1 ).zfill( 5 )
 
     number = 2
     #   Check if warning id already exists
     while collection.find_one( { 'warningId' : warningId }, { '_id' : 0 } ):
-        warningId = 'warning' + str( collection.count_documents( {} ) + number ).zfill( 5 )
+        warningId = 'warn' + str( collection.count_documents( {} ) + number ).zfill( 5 )
         number += 1
 
     return warningId
@@ -245,6 +245,39 @@ def generate_history_id():
         number += 1
 
     return historyId
+
+# check if guest is expired
+def check_guest_expired( lockId ):
+    '''
+        Check if guest is expired
+        Input: guest (dict)
+        Output: True or False
+    '''
+
+    # connect to database
+    lockCollection = db['Locks']
+    reqCollection = db['Request']
+
+    # get lock
+    lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+    
+    for guest in lock['guest']:
+        # get expire datetime
+        expireDatetime = guest['expireDatetime']
+
+        # check if guest is expired
+        if datetime.now() > expireDatetime:
+
+            # change request status to expired
+            reqCollection.update_one( { 'lockId': lockId, 'userId': guest['userId'] }, { '$set': { 'requestStatus': 'expired' } } )
+
+            # create delete lock from user
+            deleteLockFromUser = Delete(
+                userId = guest['userId'],
+                lockId = lockId,
+            )
+
+            delete_lock_from_user( deleteLockFromUser )
 
 ##################################################
 #
@@ -286,6 +319,10 @@ def signup( usersignup: UserSignup ):
     salt = uuid.uuid4().hex
     password_hash = hash_password( usersignup.password, salt )
 
+    # change first name and last name to uppercase in first letter
+    usersignup.firstName = usersignup.firstName.capitalize()
+    usersignup.lastName = usersignup.lastName.capitalize()
+
     # create new user
     newUser = User(
         firstName = usersignup.firstName, 
@@ -295,7 +332,7 @@ def signup( usersignup: UserSignup ):
         salt = salt,
         userId = userId,
         userCode = userCode,
-        userImage = usersignup.userImage,
+        userImage = usersignup.userImage if usersignup.userImage else None,
         lockLocationList = [],
         admin = [],
         member = [],
@@ -307,7 +344,7 @@ def signup( usersignup: UserSignup ):
     return { 'status': 'success' }
 
 # user login
-@app.post('/login', tags=['Users'])
+@app.post('/login/{email}/{password}', tags=['Users'])
 def login( email: str, password: str ):
 
     # connect to database
@@ -319,7 +356,7 @@ def login( email: str, password: str ):
         raise HTTPException( status_code = 404, detail = "User not found" )
     
     # hash password
-    password_hash, _ = hash_password( password, user['salt'] )
+    password_hash = hash_password( password, user['salt'] )
 
     # check if password is correct
     if password_hash != user['password_hash']:
@@ -327,13 +364,11 @@ def login( email: str, password: str ):
     
     userInfo = {   
         'userId': user['userId'],
-        'firstName': user['firstName'],
-        'lastName': user['lastName'],
-        'userImage': user['userImage'],
+        'userCode': user['userCode'],
     }
 
     return userInfo
-    
+
 ##################################################
 #   Lock Management
 #
@@ -382,7 +417,7 @@ def get_admin_lock( lockId: str ):
         'dataList': [
             {
                 'userCode': user['userCode'],
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
                 'userId': user['userId'],
                 'userName': user['firstName'],
                 'userSurname': user['lastName'],
@@ -415,6 +450,10 @@ def get_lock_location( userId: str ):
     user = collection.find_one( { 'userId': userId }, { '_id': 0 } )
     if not user:
         raise HTTPException( status_code = 404, detail = "User not found" )
+    
+    # check guest is expired before get lock
+    for lockDetail in user['guest']:
+        check_guest_expired( lockDetail['lockId'] )
     
     # get dict of lock location
     lockLocation = {
@@ -462,6 +501,10 @@ def get_user_lock( userId: str, lockLocationActiveStr: str = None):
     user = collection.find_one( { 'userId': userId }, { '_id': 0 } )
     if not user:
         raise HTTPException( status_code = 404, detail = "User not found" )
+    
+    # check guest is expired before get lock
+    for lockDetail in user['guest']:
+        check_guest_expired( lockDetail['lockId'] )
 
     lockLocationList = user['lockLocationList']
 
@@ -478,24 +521,15 @@ def get_user_lock( userId: str, lockLocationActiveStr: str = None):
         if lockLocationActiveStr == lockDetail['lockLocation']:
             dataList.append( {
                 'lockId': lockDetail['lockId'],
-                'lockImage': lockDetail['lockImage'],
+                'lockImage': lockDetail['lockImage'] if lockDetail['lockImage'] else None,
                 'lockName': lockDetail['lockName'],
             } )
-
-    # # loop for guest
-    # for guest in user['guest']:
-    #     if lockLocationActiveStr == guest['lockLocation']:
-    #         dataList.append( {
-    #             'lockId': guest['lockId'],
-    #             'lockImage': guest['lockImage'],
-    #             'lockName': guest['lockName'],
-    #         } )
        
     # get user lock
     userLock = {
         'userId': user['userId'],
         'userName': user['firstName'],
-        'userImage': user['userImage'],
+        'userImage': user['userImage'] if user['userImage'] else None,
         'lockLocationList': lockLocationList,
         'lockLocationActive': lockLocationActiveStr,
         'dataList': dataList,
@@ -538,11 +572,15 @@ def get_lock_detail( lockId: str, userId: str ):
     # connect to database
     lockCollection = db['Locks']
     userCollection = db['Users']
+    reqCollection = db['Request']
 
     # get lock
     lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
     if not lock:
         raise HTTPException( status_code = 404, detail = "Lock not found" )
+    
+    # check guest is expired before get lock
+    check_guest_expired( lockId )
     
     # check if user is admin then set isAdmin to True
     isAdmin = False
@@ -558,7 +596,7 @@ def get_lock_detail( lockId: str, userId: str ):
             dataList.append( {
                 'userId': user['userId'],
                 'userName': user['firstName'],
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
                 'role': 'admin'
             } )
 
@@ -569,7 +607,7 @@ def get_lock_detail( lockId: str, userId: str ):
             dataList.append( {
                 'userId': user['userId'],
                 'userName': user['firstName'],
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
                 'role': 'member'
             } )
 
@@ -580,8 +618,20 @@ def get_lock_detail( lockId: str, userId: str ):
             dataList.append( {
                 'userId': user['userId'],
                 'userName': user['firstName'],
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
                 'role': 'guest',
+            } )
+
+    # loop for get request user
+    for requestId in lock['request']:
+        request = reqCollection.find_one( { 'reqId': requestId }, { '_id': 0 } )
+        user = userCollection.find_one( { 'userId': request['userId'] }, { '_id': 0 } )
+        if user:
+            dataList.append( {
+                'userId': user['userId'],
+                'userName': user['firstName'],
+                'userImage': user['userImage'] if user['userImage'] else None,
+                'role': 'req',
             } )
 
     # get lock detail in user admin or member or guest
@@ -600,7 +650,7 @@ def get_lock_detail( lockId: str, userId: str ):
         'lockId': lockId,
         'lockName': lockDetail['lockName'],
         'lockLocation': lockDetail['lockLocation'],
-        'lockImage': lockDetail['lockImage'],
+        'lockImage': lockDetail['lockImage'] if lockDetail['lockImage'] else None,
         'securityStatus': lock['securityStatus'],
         'isAdmin': isAdmin,
         'dataList': dataList
@@ -609,7 +659,6 @@ def get_lock_detail( lockId: str, userId: str ):
     return lockDetails
 
 # get user of this lock by lockId and interested role
-# userId???
 @app.get('/lock/role/{lockId}/{role}', tags=['Role Setting'])
 def get_user_by_lockId_role( lockId: str, role: str ):
     '''
@@ -635,13 +684,17 @@ def get_user_by_lockId_role( lockId: str, role: str ):
     # connect to database
     lockCollection = db['Locks']
     userCollection = db['Users']
+    otherCollection = db['Other']
 
     # get lock
     lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
     if not lock:
         raise HTTPException( status_code = 404, detail = "Lock not found" )
     
-    dataList = list()
+    # check guest is expired before get lock
+    check_guest_expired( lockId )
+    
+    dataList = list()        
 
     # get user of lock by role
     for userIdStr in lock[role]:
@@ -652,14 +705,17 @@ def get_user_by_lockId_role( lockId: str, role: str ):
         else:
             user = userCollection.find_one( { 'userId': userIdStr }, { '_id': 0 } )
             datetime = None
+        # check is user is waiting for removal
+        other = otherCollection.find_one( { 'lockId': lockId, 'userId': user['userId'], 'subMode': 'removal' }, { '_id': 0 } )
         if user:
             dataList.append( {
                 'userId': user['userId'],
                 'userName': user['firstName'],
                 'userSurname': user['lastName'],
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
                 'role': role,
-                'dateTime': datetime
+                'dateTime': datetime,
+                'isWaitingForApproval': True if other else False,
             } )
     
     # get dict of user by role
@@ -709,7 +765,7 @@ def get_user_by_userCode( userCode: int ):
                 'userCode': user['userCode'],
                 'userName': user['firstName'],
                 'userSurname': user['lastName'],
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
             }
         ]
     }
@@ -785,19 +841,25 @@ def get_history_by_lockId( lockId: str ):
     if not lock:
         raise HTTPException( status_code = 404, detail = "Lock not found" )
     
+    
+    # check guest is expired before get lock
+    check_guest_expired( lockId )
+    
     # get history by lockId
     dataList = list()
     for historyId in lock['history']:
         history = historyCollection.find_one( { 'hisId': historyId }, { '_id': 0 } )
         if history:
             user = userCollection.find_one( { 'userId': history['userId'] }, { '_id': 0 } )
-            print('image',user['userImage'])
             dataList.append( {
-                'userImage': user['userImage'],
+                'userImage': user['userImage'] if user['userImage'] else None,
                 'dateTime': history['datetime'],
                 'userName': user['firstName'] + ' ' + user['lastName'],
                 'status': history['status'],
             } )
+
+    # order by datetime
+    dataList = sorted( dataList, key = lambda x: x['dateTime'], reverse = True )
     
     # get dict of history by lockId
     historyByLockId = {
@@ -849,15 +911,15 @@ def post_new_lock( new_lock: NewLock ):
     collection.insert_one( newLock.dict() )
 
     # update lock location list in user
-    # NOTE: add new lock location to lock location list
-    userCollection.update_one( { 'userId': new_lock.userId }, { '$push': { 'lockLocationList': new_lock.lockLocation } } )
+    # NOTE: add new lock location to lock location list if not exists
+    userCollection.update_one( { 'userId': new_lock.userId }, { '$addToSet': { 'lockLocationList': new_lock.lockLocation } } )
 
     # create lock detail
     newLockDetail = LockDetail(
         lockId = new_lock.lockId,
         lockName = new_lock.lockName,
         lockLocation = new_lock.lockLocation,
-        lockImage = new_lock.lockImage,
+        lockImage = new_lock.lockImage if new_lock.lockImage else None,
     )
     
     # add new lock to admin by append new lock detail to list
@@ -891,8 +953,16 @@ def post_new_request( new_request: NewRequest ):
     historyCollection = db['History']
 
     # if request is already exists
-    if collection.find_one( { 'lockId': new_request.lockId, 'userId': new_request.userId } ):
+    if collection.find_one( { 'lockId': new_request.lockId, 'userId': new_request.userId, 'requestStatus': 'sent' } ):
         raise HTTPException( status_code = 400, detail = "Request already exists" )
+    
+    # check guest is expired before get lock
+    check_guest_expired( new_request.lockId )
+    
+    # check if user is already have this lockId and return message error
+    for role in ['admin', 'member', 'guest']:
+        if lockCollection.find_one( { 'lockId': new_request.lockId, role: { '$in': [ new_request.userId ] } } ):
+            raise HTTPException( status_code = 400, detail = "User is already in lock" )
 
     # generate request id
     requestId = generate_request_id()
@@ -903,7 +973,7 @@ def post_new_request( new_request: NewRequest ):
         lockId = new_request.lockId,
         lockName = new_request.lockName,
         lockLocation = new_request.lockLocation,
-        lockImage = new_request.lockImage,
+        lockImage = new_request.lockImage if new_request.lockImage else None,
         userId = new_request.userId,
         requestStatus = 'sent',
         datetime = datetime.now(),
@@ -943,7 +1013,6 @@ def post_new_request( new_request: NewRequest ):
         hisId = historyId,
         userId = new_request.userId,
         lockId = new_request.lockId,
-
         status = 'req',
         datetime = datetime.now(),
     )
@@ -980,10 +1049,22 @@ def post_new_invitation( new_invitation: NewInvitation ):
     otherCollection = db['Other']
     lockCollection = db['Locks']
     inviteCollection = db['Invitation']
+    userCollection = db['Users']
 
     # if invitation is already exists
-    if inviteCollection.find_one( { 'srcUserId': new_invitation.srcUserId, 'desUserId': new_invitation.desUserId, 'lockId': new_invitation.lockId } ):
+    if inviteCollection.find_one( { 'desUserId': new_invitation.desUserId, 'lockId': new_invitation.lockId, 'role': new_invitation.role, 'invStatus': 'invite' } ):
         raise HTTPException( status_code = 400, detail = "Invitation already exists" )
+
+    # check guest is expired before get lock
+    check_guest_expired( new_invitation.lockId )
+
+    # check if user is already have this lockId and return message error
+    for role in ['admin', 'member']:
+        if lockCollection.find_one( { 'lockId': new_invitation.lockId, role: { '$in': [ new_invitation.desUserId ] } } ):
+            raise HTTPException( status_code = 400, detail = "User is already in lock" )
+    for guest in lockCollection.find_one( { 'lockId': new_invitation.lockId }, { 'guest': 1, '_id': 0 } )['guest']:
+        if guest['userId'] == new_invitation.desUserId:
+            raise HTTPException( status_code = 400, detail = "User is already in lock" )
 
     # generate invitation id
     invitationId = generate_invitation_id()
@@ -1052,6 +1133,68 @@ def post_lock_location( userId: str, lockLocationStr: str ):
     collection.update_one( { 'userId': userId }, { '$push': { 'lockLocationList': lockLocationStr } } )
 
     return { 'userId': userId, 'message': 'Update lock location successfully' }
+
+# get request by lockId
+@app.get('/request/{lockId}', tags=['Request Management'])
+def get_request_by_lockId( lockId: str ):
+    '''
+        get request by lockId
+        input: lockId (str)
+        output: dict of request
+        for example:
+        {
+            "lockId": "12345",
+            "dataList": [
+                {
+                    "notiId": "req01",
+                    "userId": "tw8769",
+                    "userName": "Taylor",
+                    "userSurname": "Wang",
+                    "userImage": "taylor.jpg",
+                    "dateTime": "2024-10-23T02:33:15",
+                },
+                {
+                    "notiId": "req02",
+                    "userId": "js7694",
+                    "userName": "Josephine",
+                    "userSurname": "Smith",
+                    "userImage": "josephine.jpg",
+                    "dateTime": "2024-10-23T08:57:52",
+                }
+            ]
+        }
+    '''
+
+    # connect to database
+    collection = db['Request']
+    userCollection = db['Users']
+    
+    # check guest is expired before get lock
+    check_guest_expired( lockId )
+
+    # get request by lockId
+    dataList = list()
+    for request in collection.find( { 'lockId': lockId, 'requestStatus': 'sent' }, { '_id': 0 } ):
+        user = userCollection.find_one( { 'userId': request['userId'] }, { '_id': 0 } )
+        dataList.append( {
+            'notiId': request['reqId'],
+            'userId': user['userId'],
+            'userName': user['firstName'],
+            'userSurname': user['lastName'],
+            'userImage': user['userImage'] if user['userImage'] else None,
+            'dateTime': request['datetime'],
+        } )
+
+    # order by date time
+    dataList = sorted( dataList, key = lambda x: x['dateTime'], reverse = True )
+
+    # get dict of request by lockId
+    requestByLockId = {
+        'lockId': lockId,
+        'dataList': dataList
+    }
+
+    return requestByLockId
 
 ##################################################
 #   Notification
@@ -1148,25 +1291,27 @@ def get_request_notification_list( userId: str ):
 
     # get request in notification format
     for lockDetail in lockDetailList:
-        # get only request that status is sent
-        requests = list( collection.find( { 'lockId': lockDetail['lockId'], 'requestStatus': 'sent' }, { '_id': 0 } ) )
+
+        # check guest is expired before get lock
+        check_guest_expired( lockDetail['lockId'] )
+
+        # get latest request of lock
+        request = collection.find_one( { 'lockId': lockDetail['lockId'] }, sort = [ ( 'datetime', -1 ) ] )
         lock = lockCollection.find_one( { 'lockId': lockDetail['lockId'] }, { '_id': 0 } )
-        for request in requests:
-            userReq = userCollection.find_one( { 'userId': request['userId'] }, { '_id': 0 } )
-            requestList.append(
-                {
-                    'notiId': request['reqId'],
-                    'dateTime': request['datetime'],
-                    'subMode': None,
-                    'amount': len( lock['request'] ),
-                    'lockId': lockDetail['lockId'],
-                    'lockLocation': lockDetail['lockLocation'],
-                    'lockName': lockDetail['lockName'],
-                    'userName': userReq['firstName'],
-                    'userSurname': userReq['lastName'],
-                    'role': None,
-                }
-            )
+        requestList.append(
+            {
+                'notiId': None,
+                'dateTime': request['datetime'],
+                'subMode': None,
+                'amount': len( lock['request'] ),
+                'lockId': lockDetail['lockId'],
+                'lockLocation': lockDetail['lockLocation'],
+                'lockName': lockDetail['lockName'],
+                'userName': None,
+                'userSurname': None,
+                'role': None,
+            }
+        )
 
     # order by date time
     requestList = sorted( requestList, key = lambda x: x['dateTime'], reverse = True )
@@ -1243,24 +1388,20 @@ def get_connect_notification_list( userId: str ):
         raise HTTPException( status_code = 404, detail = "User not found" )
     
     lockDetailList = user['admin']
+    if not lockDetailList:
+        raise HTTPException( status_code = 404, detail = "User is not admin in any lock" )
 
     connectList = list()
 
     # get connect in notification format
     for lockDetail in lockDetailList:
+
+        # check guest is expired before get lock
+        check_guest_expired( lockDetail['lockId'] )
+
         connects = list( conCollection.find( { 'lockId': lockDetail['lockId'] }, { '_id': 0 } ) )
         for connect in connects:
-            lockDetailCon = None
             userCon = userCollection.find_one( { 'userId': connect['userId'] }, { '_id': 0 } )
-            lockDetailCon = userCollection.find_one( { 'userId': userCon['userId'], 'admin': { '$elemMatch': { 'lockId': lockDetail['lockId'] } } }, { '_id': 0, 'admin.$': 1 } )
-            if not lockDetailCon:
-                lockDetailCon = userCollection.find_one( { 'userId': userCon['userId'], 'member': { '$elemMatch': { 'lockId': lockDetail['lockId'] } } }, { '_id': 0, 'member.$': 1 } )
-                if not lockDetailCon:
-                    lockDetailCon = userCollection.find_one( { 'userId': userCon['userId'], 'guest': { '$elemMatch': { 'lockId': lockDetail['lockId'] } } }, { '_id': 0, 'guest.$': 1 } )
-                    if not lockDetailCon:
-                        raise HTTPException( status_code = 403, detail = "User is not in lock" )
-                    
-            lockDetailCon = lockDetailCon['admin'][0] if 'admin' in lockDetailCon else lockDetailCon['member'][0] if 'member' in lockDetailCon else lockDetailCon['guest'][0]
             connectList.append(
                 {
                     'notiId': connect['conId'],
@@ -1268,8 +1409,8 @@ def get_connect_notification_list( userId: str ):
                     'subMode': None,
                     'amount': None,
                     'lockId': lockDetail['lockId'],
-                    'lockLocation': lockDetailCon['lockLocation'],
-                    'lockName': lockDetailCon['lockName'],
+                    'lockLocation': lockDetail['lockLocation'],
+                    'lockName': lockDetail['lockName'],
                     'userName': userCon['firstName'],
                     'userSurname': userCon['lastName'],
                     'role': None,
@@ -1378,8 +1519,7 @@ def get_other_notification_list( userId: str ):
     otherList = list()
 
     for other in others:
-        user = userCollection.find_one( { 'userId': other['userId'] }, { '_id': 0 } )
-        print('other',other)
+
         if other['subMode'] == 'sent' or other['subMode'] == 'accepted':
             
             # find request/invite that match with userId and lockId
@@ -1388,7 +1528,6 @@ def get_other_notification_list( userId: str ):
                 invite = inviteCollection.find_one( { 'desUserId': userId, 'lockId': other['lockId'] }, { '_id': 0 } )
                 lockDetail = userCollection.find_one( { 'userId': invite['srcUserId'], 'admin': { '$elemMatch': { 'lockId': other['lockId'] } } }, { '_id': 0, 'admin.$': 1 } )
                 lockDetail = lockDetail['admin'][0] 
-            print(lockDetail)
             otherList.append(
                 {
                     'notiId': other['otherId'],
@@ -1408,6 +1547,7 @@ def get_other_notification_list( userId: str ):
             invite = inviteCollection.find_one( { 'desUserId': other['userId'], 'lockId': other['lockId'] }, { '_id': 0 } )
             srcUser = userCollection.find_one( { 'userId': invite['srcUserId'] }, { '_id': 0 } )
             srcLockDetail = userCollection.find_one( { 'userId': invite['srcUserId'], 'admin': { '$elemMatch': { 'lockId': other['lockId'] } } }, { '_id': 0, 'admin.$': 1 } )
+            srcLockDetail = srcLockDetail['admin'][0]
             otherList.append(
                 {
                     'notiId': other['otherId'],
@@ -1420,6 +1560,24 @@ def get_other_notification_list( userId: str ):
                     'userName': srcUser['firstName'],
                     'userSurname': srcUser['lastName'],
                     'role': other['userRole'],
+                }
+            )
+
+        if other['subMode'] == 'removal':
+            lockDetail = userCollection.find_one( { 'userId': userId, 'admin': { '$elemMatch': { 'lockId': other['lockId'] } } }, { '_id': 0, 'admin.$': 1 } )
+            lockDetail = lockDetail['admin'][0]
+            otherList.append(
+                {
+                    'notiId': other['otherId'],
+                    'dateTime': other['datetime'],
+                    'subMode': other['subMode'],
+                    'amount': None,
+                    'lockId': other['lockId'],
+                    'lockLocation': lockDetail['lockLocation'],
+                    'lockName': lockDetail['lockName'],
+                    'userName': None,
+                    'userSurname': None,
+                    'role': None,
                 }
             )
 
@@ -1490,18 +1648,23 @@ def get_warning_main_notification_list( userId: str ):
 
     # get request in notification format
     for lockDetail in lockDetailList:
+
+        # check guest is expired before get lock
+        check_guest_expired( lockDetail['lockId'] )
+
         lock = lockCollection.find_one( { 'lockId': lockDetail['lockId'] }, { '_id': 0 } )
         latestWarning = warningCollection.find_one( { 'lockId': lockDetail['lockId'] }, { '_id': 0 } )
-        warningList.append(
-            {
-                'dateTime': latestWarning['datetime'],
-                'amount': len( lock['warning'] ),
-                'lockId': lockDetail['lockId'],
-                'lockLocation': lockDetail['lockLocation'],
-                'lockName': lockDetail['lockName'],
-                'error': None,
-            }
-        )
+        if len( lock['warning'] ) > 0:
+            warningList.append(
+                {
+                    'dateTime': latestWarning['datetime'],
+                    'amount': len( lock['warning'] ),
+                    'lockId': lockDetail['lockId'],
+                    'lockLocation': lockDetail['lockLocation'],
+                    'lockName': lockDetail['lockName'],
+                    'error': None,
+                }
+            )
 
     # order by date time
     warningList = sorted( warningList, key = lambda x: x['dateTime'], reverse = True )
@@ -1554,6 +1717,9 @@ def get_warning_view_notification_list( userId: str, lockId: str ):
     lockCollection = db['Locks']
     userCollection = db['Users']
 
+    # check guest is expired before get lock
+    check_guest_expired( lockId )
+
     # get user
     user = userCollection.find_one( { 'userId': userId }, { '_id': 0 } )
     if not user:
@@ -1582,6 +1748,7 @@ def get_warning_view_notification_list( userId: str, lockId: str ):
         warning = warningCollection.find_one( { 'warningId': warningId }, { '_id': 0 } )
         warningList.append(
             {
+                'notiId': warning['warningId'],
                 'dateTime': warning['datetime'],
                 'amount': None,
                 'lockId': lockId,
@@ -1622,18 +1789,37 @@ def delete_warning_notification( lockId: str, notiId: str = None ):
     # connect to database
     lockCollection = db['Locks']
 
+    # check guest is expired before get lock
+    check_guest_expired( lockId )
+
     # delete warning notification of lock
     # in case notiId is None
     if not notiId:
         # delete all of warningId in warning list
         lockCollection.update_one( { 'lockId': lockId }, { '$set': { 'warning': [] } } )
 
+        # change status of lock
+        lockCollection.update_one( { 'lockId': lockId }, { '$set': { 'securityStatus': 'secure' } } )
+
         return { 'lockId': lockId, 'message': 'Delete all notification successfully' }
 
     # in case notiId is not None
     else:
         # delete warningId of warning list of lock
-        lockCollection.update_one( { 'lockId': lockId }, { '$pull': { 'warning': { 'reqId': notiId } } } )
+        lockCollection.update_one( { 'lockId': lockId }, { '$pull': { 'warning': notiId } } )
+
+        # get lock
+        lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+
+        # status = 'warning' when warning in lock is less than 3
+        if len( lock['warning'] ) <= 3:
+            lockStatus = 'warning'
+        # status = 'risk' when warning in lock is more than 3
+        else:
+            lockStatus = 'risk'
+
+        # change status of lock depends on warning list
+        lockCollection.update_one( { 'lockId': lockId }, { '$set': { 'securityStatus': lockStatus } } )
 
         return { 'notiId': notiId, 'lockId': lockId, 'message': 'Delete notification successfully' }
 
@@ -1661,6 +1847,9 @@ def delete_invitation_notification( notiId: str ):
 
     # get invitation by notiId
     invitation = inviteCollection.find_one( { 'invId': notiId }, { '_id': 0 } )
+
+    # check guest is expired before get lock
+    check_guest_expired( invitation['lockId'] )
 
     # change status of invitation to declined
     inviteCollection.update_one( { 'invId': notiId }, { '$set': { 'invStatus': 'declined' } } )
@@ -1733,6 +1922,10 @@ def accept_request( accept_request: AcceptRequest ):
     request = collection.find_one( { 'reqId': accept_request.reqId }, { '_id': 0 } )
     if not request:
         raise HTTPException( status_code = 404, detail = "Request not found" )
+    
+    # if request status is not sent
+    if request['requestStatus'] != 'sent':
+        raise HTTPException( status_code = 400, detail = "Request is not sent" )
 
     # update request status to accepted
     collection.update_one( { 'reqId': accept_request.reqId }, { '$set': { 'requestStatus': 'accepted' } } )
@@ -1740,13 +1933,16 @@ def accept_request( accept_request: AcceptRequest ):
     # update expire datetime
     collection.update_one( { 'reqId': accept_request.reqId }, { '$set': { 'datetime': accept_request.expireDatetime } } )
 
+    # check guest is expired before get lock
+    check_guest_expired( request['lockId'] )
+
     # create new Guest
     newGuest = Guest(
         userId = request['userId'],
         lockId = request['lockId'],
         lockName = request['lockName'],
         lockLocation = request['lockLocation'],
-        lockImage = request['lockImage'],
+        lockImage = request['lockImage'] if request['lockImage'] else None,
         expireDatetime = accept_request.expireDatetime.isoformat(),
     )
 
@@ -1757,8 +1953,9 @@ def accept_request( accept_request: AcceptRequest ):
     userCollection.update_one( { 'userId': request['userId'] }, { '$push': { 'guest': newGuest.dict() } } )
 
     # add location to lock location list in user
-    # NOTE: add location to lock location list
-    userCollection.update_one( { 'userId': request['userId'] }, { '$push': { 'lockLocationList': request['lockLocation'] } } )
+    # NOTE: add location to lock location list if not exists
+    if request['lockLocation'] not in userCollection.find_one( { 'userId': request['userId'] }, { '_id': 0 } )['lockLocationList']:
+        userCollection.update_one( { 'userId': request['userId'] }, { '$push': { 'lockLocationList': request['lockLocation'] } } )
 
     # generate new connect id
     connectId = generate_connect_id()
@@ -1823,6 +2020,13 @@ def accept_request( accept_request: AcceptRequest ):
     # delete other
     otherCollection.delete_one( { 'userId': request['userId'], 'lockId': request['lockId'], 'submode': 'sent' } )
 
+    # get every other by userId and lockId
+    others = list( otherCollection.find( { 'userId': request['userId'], 'lockId': request['lockId'], 'subMode': 'invite' }, { '_id': 0 } ) )
+
+    # decline every other
+    for other in others:
+        decline_invitation( other['otherId'] )
+
     return { 'reqId': accept_request.reqId, 'message': 'Accept request successfully' }
 
 # accept all request
@@ -1842,8 +2046,11 @@ def accept_all_request( accept_all_request: AcceptAllRequest ):
     # connect to database
     collection = db['Request']
 
-    # get all request by lockId
-    requests = list( collection.find( { 'lockId': accept_all_request.lockId }, { '_id': 0 } ) )
+    # check guest is expired before get lock
+    check_guest_expired( accept_all_request.lockId )
+
+    # get all request by lockId that status is request
+    requests = list( collection.find( { 'lockId': accept_all_request.lockId, 'requestStatus': 'sent' }, { '_id': 0 } ) )
 
     # accept all request by using function accept_request
     for request in requests:
@@ -1856,7 +2063,7 @@ def accept_all_request( accept_all_request: AcceptAllRequest ):
     return { 'lockId': accept_all_request.lockId, 'message': 'All request have been accepted' }
 
 # decline request
-@app.put('/declineRequest/{reqId}', tags=['Decline Request'])
+@app.delete('/declineRequest/{reqId}', tags=['Decline Request'])
 def decline_request( reqId: str ):
     '''
         decline request by update request status to declined
@@ -1880,6 +2087,13 @@ def decline_request( reqId: str ):
     request = collection.find_one( { 'reqId': reqId }, { '_id': 0 } )
     if not request:
         raise HTTPException( status_code = 404, detail = "Request not found" )
+    
+    # if request status is not sent
+    if request['requestStatus'] != 'sent':
+        raise HTTPException( status_code = 400, detail = "Request is not sent" )
+    
+    # check guest is expired before get lock
+    check_guest_expired( request['lockId'] )
 
     # update request status to declined
     collection.update_one( { 'reqId': reqId }, { '$set': { 'requestStatus': 'declined' } } )
@@ -1919,16 +2133,20 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
     lockCollection = db['Locks']
     userCollection = db['Users']
     conCollection = db['Connect']
-    otherCollection = db['Other']
     hisCollection = db['History']
+    reqCollection = db['Request']
+    otherCollection = db['Other']
 
-    # get invitation by invId
-    invitation = inviteCollection.find_one( { 'invId': accept_invitation.invId }, { '_id': 0 } )
+    # get invitation
+    invitation = inviteCollection.find_one( { 'desUserId': accept_invitation.userId, 'lockId': accept_invitation.lockId, 'role': accept_invitation.userRole, 'invStatus': 'invite' }, { '_id': 0 } )
     if not invitation:
         raise HTTPException( status_code = 404, detail = "Invitation not found" )
+    
+    # check guest is expired before get lock
+    check_guest_expired( invitation['lockId'] )
 
     # update invitation status to accepted
-    inviteCollection.update_one( { 'invId': accept_invitation.invId }, { '$set': { 'invStatus': 'accepted' } } )
+    inviteCollection.update_one( { 'invId': invitation['invId'] }, { '$set': { 'invStatus': 'accepted' } } )
 
     # in case role is admin or member
     if invitation['role'] == 'admin' or invitation['role'] == 'member':
@@ -1937,7 +2155,7 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
             lockId = invitation['lockId'],
             lockName = accept_invitation.lockName,
             lockLocation = accept_invitation.lockLocation,
-            lockImage = accept_invitation.lockImage,
+            lockImage = accept_invitation.lockImage if accept_invitation.lockImage else None,
         )
 
         # add user to lock
@@ -1953,7 +2171,7 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
             lockId = invitation['lockId'],
             lockName = accept_invitation.lockName,
             lockLocation = accept_invitation.lockLocation,
-            lockImage = accept_invitation.lockImage,
+            lockImage = accept_invitation.lockImage if accept_invitation.lockImage else None,
             datetime = invitation['datetime']
         )
 
@@ -1963,8 +2181,8 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
         userCollection.update_one( { 'userId': invitation['desUserId'] }, { '$push': { 'guest': newGuest.dict() } } )
 
     # add location to lock location list in user
-    # NOTE: add location to lock location list
-    userCollection.update_one( { 'userId': invitation['desUserId'] }, { '$push': { 'lockLocationList': accept_invitation.lockLocation } } )
+    # NOTE: add location to lock location list if not in list
+    userCollection.update_one( { 'userId': invitation['desUserId'] }, { '$addToSet': { 'lockLocationList': accept_invitation.lockLocation } } )
 
     # generate new connect id
     connectId = generate_connect_id()
@@ -2024,25 +2242,35 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
 
     # delete invitation from lock
     # NOTE: delete invitation from lock by pull invitation from invitation list
-    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$pull': { 'invitation': accept_invitation.invId } } )
+    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$pull': { 'invitation': invitation['invId'] } } )
 
     # delete other that match with desUserId, userRole and lockId
-    otherCollection.delete_one( { 'userId': invitation['desUserId'], 'userRole': invitation['role'], 'lockId': invitation['lockId'], 'subMode': 'invite' }, { '_id': 0 } )
+    otherCollection.delete_one( { 'userId': invitation['desUserId'], 'userRole': invitation['role'], 'lockId': invitation['lockId'], 'subMode': 'invite' } )
 
-    return { 'invId': accept_invitation.invId, 'message': 'Accept invitation successfully' }
+    # delete every other that match with desUserId, userRole and lockId
+    others = list( otherCollection.find( { 'userId': invitation['desUserId'], 'lockId': invitation['lockId'], 'subMode': 'invite' }, { '_id': 0 } ) )
+    for other in others:
+        decline_invitation( other['otherId'] )
+
+    # delete every request that match with userId and lockId
+    requests = list( reqCollection.find( { 'userId': invitation['desUserId'], 'lockId': invitation['lockId'], 'requestStatus': 'sent' }, { '_id': 0 } ) )
+    for request in requests:
+        decline_request( request['reqId'] )
+
+    return { 'invId': invitation['invId'], 'message': 'Accept invitation successfully' }
 
 # decline invitation
-@app.put('/declineInvitation/{invId}', tags=['Decline Invitation'])
-def decline_invitation( invId: str ):
+@app.delete('/declineInvitation/{otherId}', tags=['Decline Invitation'])
+def decline_invitation( otherId: str ):
     '''
         decline invitation by update invitation status to declined
         delete invitation from lock
         delete other
-        input: invId (str)
+        input: otherId (str)
         output: dict of invitation
         for example:
         {
-            "invId": "inv01",
+            "otherId": "inv01",
             "message": "Decline invitation successfully"
         }
     '''
@@ -2052,22 +2280,28 @@ def decline_invitation( invId: str ):
     lockCollection = db['Locks']
     otherCollection = db['Other']
 
+    # get other by otherId
+    other = otherCollection.find_one( { 'otherId': otherId }, { '_id': 0 } )
+
+    # check guest is expired before get lock
+    check_guest_expired( other['lockId'] )
+
     # get invitation by invId
-    invitation = inviteCollection.find_one( { 'invId': invId }, { '_id': 0 } )
+    invitation = inviteCollection.find_one( { 'desUserId': other['userId'], 'lockId': other['lockId'], 'role': other['userRole'], 'invStatus': 'invite' }, { '_id': 0 } )
     if not invitation:
         raise HTTPException( status_code = 404, detail = "Invitation not found" )
 
     # update invitation status to declined
-    inviteCollection.update_one( { 'invId': invId }, { '$set': { 'invStatus': 'declined' } } )
+    inviteCollection.update_one( { 'invId': invitation['invId'] }, { '$set': { 'invStatus': 'declined' } } )
 
     # delete invitation from lock
     # NOTE: delete invitation from lock by pull invitation from invitation list
-    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$pull': { 'invitation': invId } } )
+    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$pull': { 'invitation': invitation['invId'] } } )
 
     # delete other that match with desUserId, userRole and lockId
-    otherCollection.delete_one( { 'userId': invitation['desUserId'], 'userRole': invitation['role'], 'lockId': invitation['lockId'], 'subMode': 'invite' }, { '_id': 0 } )
+    otherCollection.delete_one( { 'otherId': otherId, 'subMode': 'invite' } )
 
-    return { 'invId': invId, 'message': 'Decline invitation successfully' }
+    return { 'invId': invitation['invId'], 'message': 'Decline invitation successfully' }
 
 ##################################################
 #   User Setting
@@ -2104,7 +2338,7 @@ def get_user_detail( userId: str ):
         'userName': user['firstName'],
         'userSurname': user['lastName'],
         'userEmail': user['email'],
-        'userImage': user['userImage'],
+        'userImage': user['userImage'] if user['userImage'] else None,
         'isEmailVerified': False,
     }
     
@@ -2135,6 +2369,10 @@ def user_edit_profile( user_edit_profile: UserEditProfile ):
     user = collection.find_one( { 'userId': user_edit_profile.userId }, { '_id': 0 } )
     if not user:
         raise HTTPException( status_code = 404, detail = "User not found" )
+    
+    # change first name and last name to uppercase in first letter
+    user_edit_profile.newFirstName = user_edit_profile.newFirstName.capitalize()
+    user_edit_profile.newLastName = user_edit_profile.newLastName.capitalize()
 
     # update user detail
     collection.update_one( { 'userId': user_edit_profile.userId }, { '$set': 
@@ -2177,8 +2415,526 @@ def user_change_password( user_change_password: UserChangePassword ):
     # check current password
     if user['password_hash'] != current_password_hash:
         raise HTTPException( status_code = 403, detail = "Current password doesn’t match" )
+    
+    # get new password hash and salt
+    salt = uuid.uuid4().hex
+    new_password_hash = hash_password( user_change_password.newPassword, salt )
 
     # update user password
-    collection.update_one( { 'userId': user_change_password.userId }, { '$set': { 'userPassword': user_change_password.newPassword } } )
+    collection.update_one( { 'userId': user_change_password.userId }, { '$set': { 'password_hash': new_password_hash, 'salt': salt } } )
 
     return { 'userId': user_change_password.userId, 'message': 'Change password successfully' }
+
+# new warning
+@app.post('/newWarning', tags=['New Warning'])
+def post_new_warning( new_warning: NewWarning ):
+    '''
+        post warning by append warning to lock warning list
+        change lock status to warning
+        post history and add history to lock
+        input: lockId (str) and warning message (str)
+        output: dict of warning
+        for example:
+        {
+            "lockId": "12345",
+            "warningId": "warn01",
+            "message": "Post warning successfully"
+        }
+    '''
+
+    # connect to database
+    lockCollection = db['Locks']
+    warningCollection = db['Warning']
+    hisCollection = db['History']
+
+    # check guest is expired before get lock
+    check_guest_expired( new_warning.lockId )
+
+    # get lock by lockId
+    lock = lockCollection.find_one( { 'lockId': new_warning.lockId }, { '_id': 0 } )
+    if not lock:
+        raise HTTPException( status_code = 404, detail = "Lock not found" )
+
+    # generate new warning id
+    warningId = generate_warning_id()
+
+    # message = "Authentication failed"
+
+    # create new warning
+    newWarning = Warning(
+        warningId = warningId,
+        userId = new_warning.userId,
+        lockId = new_warning.lockId,
+        message = "Authentication failed",
+        datetime = datetime.now()
+    )
+
+    # add new warning to database
+    warningCollection.insert_one( newWarning.dict() )
+
+    # add new warning to lock
+    # NOTE: add new warning to lock by append new warning to warning list
+    lockCollection.update_one( { 'lockId': new_warning.lockId }, { '$push': { 'warning': warningId } } )
+
+    # status = 'warning' when warning in lock is less than 3
+    if len( lock['warning'] ) <= 3:
+        lockStatus = 'warning'
+    # status = 'risk' when warning in lock is more than 3
+    else:
+        lockStatus = 'risk'
+
+    # change lock status to warning
+    lockCollection.update_one( { 'lockId': new_warning.lockId }, { '$set': { 'securityStatus': lockStatus } } )
+
+    # generate new history id
+    historyId = generate_history_id()
+
+    # create new history
+    # NOTE: create new history with status = risk
+    newHistory = History(
+        hisId = historyId,
+        userId = new_warning.userId,
+        lockId = new_warning.lockId,
+        status = 'risk',
+        datetime = datetime.now()
+    )
+
+    # add new history to database
+    hisCollection.insert_one( newHistory.dict() )
+
+    # add new history to lock
+    # NOTE: add new history to lock by append new history to history list
+    lockCollection.update_one( { 'lockId': new_warning.lockId }, { '$push': { 'history': historyId } } )
+
+    return { 'lockId': new_warning.lockId, 'warningId': warningId, 'message': 'Post warning successfully' }
+
+# delete user in lock
+@app.delete('/deleteUserFromLock', tags=['User Setting'])
+def delete_user_from_lock( delete_user_from_lock: Delete ):
+    '''
+        delete user in lock by pull user from lock
+        delete lock from user by pull lock id from user
+        delete location from lock location list of user
+        post other if userRole is admin 
+        input: userId (str) and lockId (str)
+        output: dict of user detail
+        for example:
+        {
+            "userId": "js7694",
+            "lockId": "12345",
+            "message": "Delete user successfully"
+        }
+    '''
+
+    # connect to database
+    lockCollection = db['Locks']
+    userCollection = db['Users']
+    otherCollection = db['Other']
+
+    # check guest is expired before get lock
+    check_guest_expired( delete_user_from_lock.lockId )
+
+    # get lock by lockId
+    lock = lockCollection.find_one( { 'lockId': delete_user_from_lock.lockId }, { '_id': 0 } )
+    if not lock:
+        raise HTTPException( status_code = 404, detail = "Lock not found" )
+
+    # get user by userId
+    user = userCollection.find_one( { 'userId': delete_user_from_lock.userId }, { '_id': 0 } )
+    if not user:
+        raise HTTPException( status_code = 404, detail = "User not found" )
+
+    # get role of user in lock
+    if userCollection.find_one( { 'userId': delete_user_from_lock.userId, 'admin': { '$elemMatch': { 'lockId': delete_user_from_lock.lockId } } } ):
+        userRole = 'admin'
+    elif userCollection.find_one( { 'userId': delete_user_from_lock.userId, 'member': { '$elemMatch': { 'lockId': delete_user_from_lock.lockId } } } ):
+        userRole = 'member'
+    elif userCollection.find_one( { 'userId': delete_user_from_lock.userId, 'guest': { '$elemMatch': { 'lockId': delete_user_from_lock.lockId } } } ):
+        userRole = 'guest'
+    else:
+        raise HTTPException( status_code = 404, detail = "User not in lock" )
+
+    # in case userRole is admin
+    if userRole == 'admin':
+
+        # check other is exist
+        other = otherCollection.find_one( { 'userId': delete_user_from_lock.userId, 'lockId': delete_user_from_lock.lockId, 'subMode': 'removal' }, { '_id': 0 } )
+        if other:
+            raise HTTPException( status_code = 400, detail = "User waiting to approval" )
+        
+        # generate new other id
+        otherId = generate_other_id()
+
+        # create new other
+        # NOTE: create new other with subMode = delete
+        newOther = Other(
+            otherId = otherId,
+            subMode = 'removal',
+            amount = None,
+            userId = delete_user_from_lock.userId,
+            userRole = 'admin',
+            lockId = delete_user_from_lock.lockId,
+            datetime = datetime.now(),
+        )
+
+        # add new other to database
+        otherCollection.insert_one( newOther.dict() )
+
+        return { 'userId': delete_user_from_lock.userId, 'lockId': delete_user_from_lock.lockId, 'message': 'Sent removal to user' }
+
+    else:
+
+        # get lock detail by userId
+        lockDetail = userCollection.find_one( { 'userId': delete_user_from_lock.userId, userRole: { '$elemMatch': { 'lockId': delete_user_from_lock.lockId } } }, { '_id': 0, userRole + '.$': 1 } )
+        lockDetail = lockDetail[userRole][0]
+
+        # delete user from lock
+        # NOTE: delete user from lock by pull user from userRole list
+        if userRole == 'member':
+            lockCollection.update_one( { 'lockId': delete_user_from_lock.lockId }, { '$pull': { 'member': delete_user_from_lock.userId } } )
+        elif userRole == 'guest':
+            lockCollection.update_one( { 'lockId': delete_user_from_lock.lockId }, { '$pull': { 'guest': { 'lockId': delete_user_from_lock.lockId } } } )
+
+        # delete lock from user
+        # NOTE: delete lock from user by pull lock detail from lock list
+        userCollection.update_one( { 'userId': delete_user_from_lock.userId }, { '$pull': { userRole: { 'lockId': delete_user_from_lock.lockId } } } )
+
+        lockLocationList = []
+
+        # get lock location list of user admin and member and guest
+        for userRole in ['admin', 'member', 'guest']:
+            for userLockDetail in user[userRole]:
+                if userLockDetail['lockId'] != delete_user_from_lock.lockId:
+                    lockLocationList.append( userLockDetail['lockLocation'] )
+
+        # delete lock location from user
+        # NOTE: delete location from lock location list if not in list
+        if not lockDetail['lockLocation'] in lockLocationList:
+            userCollection.update_one( { 'userId': delete_user_from_lock.userId }, { '$pull': { 'lockLocationList': lockDetail['lockLocation'] } } )
+
+        # delete every other that match with userId and lockId
+        otherCollection.delete_many( { 'userId': delete_user_from_lock.userId, 'lockId': delete_user_from_lock.lockId } )
+
+        return { 'userId': delete_user_from_lock.userId, 'lockId': delete_user_from_lock.lockId, 'message': 'Delete user successfully' }
+    
+# accept removal
+@app.put('/acceptRemoval/{userId}/{lockId}', tags=['Accept Removal'])
+def accept_removal( userId: str, lockId: str ):
+    '''
+        accept removal by delete user from lock
+        delete lock from user
+        delete location from lock location list of user
+        input: userId (str) and lockId (str)
+        output: dict of user detail
+        for example:
+        {
+            "userId": "js7694",
+            "lockId": "12345",
+            "message": "Accept removal successfully"
+        }
+    '''
+
+    # connect to database
+    lockCollection = db['Locks']
+    userCollection = db['Users']
+    otherCollection = db['Other']
+
+    # get other by otherId by userId and lockId
+    other = otherCollection.find_one( { 'userId': userId, 'lockId': lockId, 'subMode': 'removal' }, { '_id': 0 } )
+    if not other:
+        raise HTTPException( status_code = 404, detail = "Removal not found" )
+    
+    # get user
+    user = userCollection.find_one( { 'userId': userId }, { '_id': 0 } )
+
+    print(other)
+
+    # check guest is expired before get lock
+    check_guest_expired( lockId )
+
+    # delete user from lock
+    # NOTE: delete user from lock by pull user from admin list
+    lockCollection.update_one( { 'lockId': lockId }, { '$pull': { 'admin': userId } } )
+
+    # get lock detail by userId
+    lockDetail = userCollection.find_one( { 'userId': userId, 'admin': { '$elemMatch': { 'lockId': lockId } } }, { '_id': 0, 'admin.$': 1 } )
+    lockDetail = lockDetail['admin'][0]
+
+    # delete lock from user
+    # NOTE: delete lock from user by pull lock detail from admin list
+    userCollection.update_one( { 'userId': userId }, { '$pull': { 'admin': { 'lockId': lockId } } } )
+
+    lockLocationList = []
+
+    # get lock location list of user admin and member and guest
+    for userRole in ['admin', 'member', 'guest']:
+        for userLockDetail in user[userRole]:
+            if userLockDetail['lockId'] != lockId:
+                lockLocationList.append( userLockDetail['lockLocation'] )
+
+    # delete lock location from user
+    # NOTE: delete location from lock location list if not in list
+    if not lockDetail['lockLocation'] in lockLocationList:
+        userCollection.update_one( { 'userId': userId }, { '$pull': { 'lockLocationList': lockDetail['lockLocation'] } } )
+
+    # delete every other that match with userId and lockId
+    otherCollection.delete_many( { 'userId': userId, 'lockId': lockId } )
+    
+    return { 'userId': userId, 'lockId': lockId, 'message': 'Accept removal successfully' }
+
+# decline removal
+@app.delete('/declineRemoval/{userId}/{lockId}', tags=['Decline Removal'])
+def decline_removal( userId: str, lockId: str ):
+    '''
+        decline removal by delete other
+        input: otherId (str)
+        output: dict of user detail
+        for example:
+        {
+            "userId": "js7694",
+            "lockId": "12345",
+            "message": "Decline removal successfully"
+        }
+    '''
+
+    # connect to database
+    otherCollection = db['Other']
+
+    # get other by otherId by userId and lockId
+    other = otherCollection.find_one( { 'userId': userId, 'lockId': lockId, 'subMode': 'removal' }, { '_id': 0 } )
+    if not other:
+        raise HTTPException( status_code = 404, detail = "Removal not found" )
+
+    # delete other
+    otherCollection.delete_one( { 'otherId': other['otherId'] } )
+
+    return { 'message': 'Decline removal successfully' }
+
+# delete lock from user
+@app.delete('/deleteLockFromUser', tags=['User Setting'])
+def delete_lock_from_user( delete_lock_from_user: Delete ):
+    '''
+        delete lock from user by pull lock detail from user
+        delete user from lock by pull user from lock
+        delete location from lock location list of user
+        input: userId (str) and lockId (str)
+        output: dict of user detail
+        for example:
+        {
+            "userId": "js7694",
+            "lockId": "12345",
+            "message": "Delete lock successfully"
+        }
+    '''
+
+    # connect to database
+    lockCollection = db['Locks']
+    userCollection = db['Users']
+    otherCollection = db['Other']
+
+    # get lock by lockId
+    lock = lockCollection.find_one( { 'lockId': delete_lock_from_user.lockId }, { '_id': 0 } )
+    if not lock:
+        raise HTTPException( status_code = 404, detail = "Lock not found" )
+
+    # get user by userId
+    user = userCollection.find_one( { 'userId': delete_lock_from_user.userId }, { '_id': 0 } )
+    if not user:
+        raise HTTPException( status_code = 404, detail = "User not found" )
+    
+    # get lck detail
+    lockDetail = userCollection.find_one( { 'userId': delete_lock_from_user.userId, 'admin': { '$elemMatch': { 'lockId': delete_lock_from_user.lockId } } }, { '_id': 0, 'admin.$': 1 } )
+    if not lockDetail:
+        lockDetail = userCollection.find_one( { 'userId': delete_lock_from_user.userId, 'member': { '$elemMatch': { 'lockId': delete_lock_from_user.lockId } } }, { '_id': 0, 'member.$': 1 } )
+        if not lockDetail:
+            lockDetail = userCollection.find_one( { 'userId': delete_lock_from_user.userId, 'guest': { '$elemMatch': { 'lockId': delete_lock_from_user.lockId } } }, { '_id': 0, 'guest.$': 1 } )
+            if not lockDetail:
+                raise HTTPException( status_code = 403, detail = "User is not in lock" )
+            
+    lockDetail = lockDetail['admin'][0] if 'admin' in lockDetail else lockDetail['member'][0] if 'member' in lockDetail else lockDetail['guest'][0]
+
+    # delete lock from user
+    # NOTE: delete lock from user by pull lock detail from admin list
+    # NOTE: delete location from lock location list
+    userCollection.update_one( { 'userId': delete_lock_from_user.userId }, { '$pull': { 'admin': { 'lockId': delete_lock_from_user.lockId } } } )
+    userCollection.update_one( { 'userId': delete_lock_from_user.userId }, { '$pull': { 'member': { 'lockId': delete_lock_from_user.lockId } } } )
+    userCollection.update_one( { 'userId': delete_lock_from_user.userId }, { '$pull': { 'guest': { 'lockId': delete_lock_from_user.lockId } } } )
+
+    lockLocationList = []
+
+    # get lock location list of user admin and member and guest
+    for userRole in ['admin', 'member', 'guest']:
+        for userLockDetail in user[userRole]:
+            if userLockDetail['lockId'] != delete_lock_from_user.lockId:
+                lockLocationList.append( userLockDetail['lockLocation'] )
+
+    # delete lock location from user
+    # NOTE: delete location from lock location list if not in list
+    if not lockDetail['lockLocation'] in lockLocationList:
+        userCollection.update_one( { 'userId': delete_lock_from_user.userId }, { '$pull': { 'lockLocationList': lockDetail['lockLocation'] } } )
+
+    # delete user from lock
+    # NOTE: delete user from lock by pull user from userRole list
+    lockCollection.update_one( { 'lockId': delete_lock_from_user.lockId }, { '$pull': { 'admin': delete_lock_from_user.userId } } )
+    lockCollection.update_one( { 'lockId': delete_lock_from_user.lockId }, { '$pull': { 'member': delete_lock_from_user.userId } } )
+    lockCollection.update_one( { 'lockId': delete_lock_from_user.lockId }, { '$pull': { 'guest': { 'userId': delete_lock_from_user.userId } } } )
+
+    # delete other that submode is removal
+    otherCollection.delete_one( { 'userId': delete_lock_from_user.userId, 'lockId': delete_lock_from_user.lockId, 'subMode': 'removal' } )
+
+    # delete every other that match with userId and lockId
+    otherCollection.delete_many( { 'userId': delete_lock_from_user.userId, 'lockId': delete_lock_from_user.lockId } )
+
+    return { 'userId': delete_lock_from_user.userId, 'lockId': delete_lock_from_user.lockId, 'message': 'Delete lock successfully' }
+
+# edit lock detail
+@app.put('/editLockDetail', tags=['Edit Lock Detail'])
+def edit_lock_detail( edit_lock_detail: EditLockDetail ):
+    '''
+        edit lock detail by update lock detail
+        input: lockId (str) and lock detail
+        output: dict of lock detail
+        for example:
+        {
+            "lockId": "12345",
+            "lockName": "Home",
+            "lockLocation": "123/45",
+            "lockImage": "https://example.com/home.jpg",
+            "message": "Edit lock detail successfully"
+        }
+    '''
+
+    # connect to database
+    userCollection = db['Users']
+
+    # check guest is expired before get lock
+    check_guest_expired( edit_lock_detail.lockId )
+
+    userRole = 'admin'
+    # get lock detail by userId from admin or member or guest
+    lockDetail = userCollection.find_one( { 'userId': edit_lock_detail.userId, 'admin': { '$elemMatch': { 'lockId': edit_lock_detail.lockId } } }, { '_id': 0, 'admin.$': 1 } )
+    if not lockDetail:
+        userRole = 'member'
+        lockDetail = userCollection.find_one( { 'userId': edit_lock_detail.userId, 'member': { '$elemMatch': { 'lockId': edit_lock_detail.lockId } } }, { '_id': 0, 'member.$': 1 } )
+        if not lockDetail:
+            userRole = 'guest'
+            lockDetail = userCollection.find_one( { 'userId': edit_lock_detail.userId, 'guest': { '$elemMatch': { 'lockId': edit_lock_detail.lockId } } }, { '_id': 0, 'guest.$': 1 } )
+            if not lockDetail:
+                raise HTTPException( status_code = 403, detail = "User is not in lock" )
+    
+    lockDetail = lockDetail['admin'][0] if 'admin' in lockDetail else lockDetail['member'][0] if 'member' in lockDetail else lockDetail['guest'][0]
+
+    # update lock detail from user
+    # NOTE: update lock detail from user by set new lock detail
+    # if userRole is admin and member
+    if userRole == 'admin' or userRole == 'member':
+
+        # create new lock detail
+        newLockDetail = LockDetail(
+            lockId = edit_lock_detail.lockId,
+            lockName = edit_lock_detail.newLockName if edit_lock_detail.newLockName else lockDetail['lockName'],
+            lockLocation = edit_lock_detail.newLockLocation if edit_lock_detail.newLockLocation else lockDetail['lockLocation'],
+            lockImage = edit_lock_detail.newLockImage if edit_lock_detail.newLockImage else lockDetail['lockImage'],
+        )
+        userCollection.update_one( { 'userId': edit_lock_detail.userId, userRole: { '$elemMatch': { 'lockId': edit_lock_detail.lockId } }  }, { '$set': { userRole+'.$': newLockDetail.dict() } } )
+
+    # if userRole is guest
+    else:
+    
+        # create new guest
+        newGuest = Guest(
+            userId = edit_lock_detail.userId,
+            lockId = edit_lock_detail.lockId,
+            lockName = edit_lock_detail.newLockName if edit_lock_detail.newLockName else lockDetail['lockName'],
+            lockLocation = edit_lock_detail.newLockLocation if edit_lock_detail.newLockLocation else lockDetail['lockLocation'],
+            lockImage = edit_lock_detail.newLockImage if edit_lock_detail.newLockImage else lockDetail['lockImage'],
+            expireDatetime = lockDetail['expireDatetime']
+        )
+
+        userCollection.update_one( { 'userId': edit_lock_detail.userId, 'guest': { '$elemMatch': { 'lockId': edit_lock_detail.lockId } } }, { '$set': { 'guest.$': newGuest.dict() } } )
+
+    # if newLockLocation is not None
+    if edit_lock_detail.newLockLocation:
+
+        # get user
+        user = userCollection.find_one( { 'userId': edit_lock_detail.userId }, { '_id': 0 } )
+
+        lockLocationList = list()
+        
+        # get lock location list of user
+        for userRole in ['admin', 'member', 'guest']:
+            for userRoleLockDetail in user[userRole]:
+                lockLocationList.append( userRoleLockDetail['lockLocation'] )
+
+        # delete duplicate location
+        lockLocationList = list( set( lockLocationList ) )
+
+        userCollection.update_one( { 'userId': edit_lock_detail.userId }, { '$addToSet': { 'lockLocationList': edit_lock_detail.newLockLocation } } )
+
+        # if old location not in lock location list
+        if lockDetail['lockLocation'] not in lockLocationList:
+            userCollection.update_one( { 'userId': edit_lock_detail.userId }, { '$pull': { 'lockLocationList': lockDetail['lockLocation'] } } )
+
+    return { 'message': 'Edit lock detail successfully' }
+
+# check lock exits
+@app.get('/checkLock/{lockId}', tags=['Check Lock'])
+def check_lock( lockId: str ):
+    '''
+        check lock exits by get lock detail
+        input: lockId (str)
+        output: dict of lock detail
+        for example: 
+        { 
+            'lockId': lockId, 
+            'isInDatabase': False 
+        }
+    '''
+
+    # connect to database
+    collection = db['Locks']
+
+    # check guest is expired before get lock
+    check_guest_expired( lockId )
+
+    # get lock by lockId
+    lock = collection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+    if not lock:
+        return { 'lockId': lockId, 'isInDatabase': False }
+
+    return { 'lockId': lockId, 'isInDatabase': True }
+
+# delete lock location
+@app.delete('/deleteLockLocation', tags=['User Setting'])
+def delete_lock_location( delete_lock_location: DeleteLockLocation ):
+    '''
+        delete lock location by pull location from lock location list of user
+        input: userId (str) and lockLocation (str)
+        output: dict of user detail
+        for example:
+        {
+            "userId": "js7694",
+            "lockLocation": "123/45",
+            "message": "Delete lock location successfully"
+        }
+    '''
+
+    # connect to database
+    userCollection = db['Users']
+
+    # get user by userId
+    user = userCollection.find_one( { 'userId': delete_lock_location.userId }, { '_id': 0 } )
+    if not user:
+        raise HTTPException( status_code = 404, detail = "User not found" )
+    
+    # in case lock location is in use
+    for userRole in ['admin', 'member', 'guest']:
+        for userLockDetail in user[userRole]:
+            if userLockDetail['lockLocation'] == delete_lock_location.lockLocation:
+                raise HTTPException( status_code = 409, detail = "Location is in use" )
+            
+    # delete location from lock location list of user
+    # NOTE: delete location from lock location list if not in list
+    userCollection.update_one( { 'userId': delete_lock_location.userId }, { '$pull': { 'lockLocationList': delete_lock_location.lockLocation } } )
+
+    return { 'userId': delete_lock_location.userId, 'lockLocation': delete_lock_location.lockLocation, 'message': 'Delete lock location successfully' }
