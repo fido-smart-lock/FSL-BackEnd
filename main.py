@@ -2415,9 +2415,13 @@ def user_change_password( user_change_password: UserChangePassword ):
     # check current password
     if user['password_hash'] != current_password_hash:
         raise HTTPException( status_code = 403, detail = "Current password doesn’t match" )
+    
+    # get new password hash and salt
+    salt = uuid.uuid4().hex
+    new_password_hash = hash_password( user_change_password.newPassword, salt )
 
     # update user password
-    collection.update_one( { 'userId': user_change_password.userId }, { '$set': { 'userPassword': user_change_password.newPassword } } )
+    collection.update_one( { 'userId': user_change_password.userId }, { '$set': { 'password_hash': new_password_hash, 'salt': salt } } )
 
     return { 'userId': user_change_password.userId, 'message': 'Change password successfully' }
 
@@ -2586,7 +2590,10 @@ def delete_user_from_lock( delete_user_from_lock: Delete ):
 
         # delete user from lock
         # NOTE: delete user from lock by pull user from userRole list
-        lockCollection.update_one( { 'lockId': delete_user_from_lock.lockId }, { '$pull': { userRole: delete_user_from_lock.userId } } )
+        if userRole == 'member':
+            lockCollection.update_one( { 'lockId': delete_user_from_lock.lockId }, { '$pull': { 'member': delete_user_from_lock.userId } } )
+        elif userRole == 'guest':
+            lockCollection.update_one( { 'lockId': delete_user_from_lock.lockId }, { '$pull': { 'guest': { 'lockId': delete_user_from_lock.lockId } } } )
 
         # delete lock from user
         # NOTE: delete lock from user by pull lock detail from lock list
@@ -2920,11 +2927,12 @@ def delete_lock_location( delete_lock_location: DeleteLockLocation ):
     if not user:
         raise HTTPException( status_code = 404, detail = "User not found" )
     
+    # in case lock location is in use
     for userRole in ['admin', 'member', 'guest']:
         for userLockDetail in user[userRole]:
             if userLockDetail['lockLocation'] == delete_lock_location.lockLocation:
-                return { 'userId': delete_lock_location.userId, 'lockLocation': delete_lock_location.lockLocation, 'message': 'Lock location is in use' }
-
+                raise HTTPException( status_code = 409, detail = "Location is in use" )
+            
     # delete location from lock location list of user
     # NOTE: delete location from lock location list if not in list
     userCollection.update_one( { 'userId': delete_lock_location.userId }, { '$pull': { 'lockLocationList': delete_lock_location.lockLocation } } )
