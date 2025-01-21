@@ -323,6 +323,9 @@ def signup( usersignup: UserSignup ):
     usersignup.firstName = usersignup.firstName.capitalize()
     usersignup.lastName = usersignup.lastName.capitalize()
 
+    # change email to lowercase
+    usersignup.email = usersignup.email.lower()
+
     # create new user
     newUser = User(
         firstName = usersignup.firstName, 
@@ -349,6 +352,9 @@ def login( email: str, password: str ):
 
     # connect to database
     collection = db['Users']
+
+    # change email to lowercase
+    email = email.lower()
 
     # check if email exists
     user = collection.find_one( { 'email': email } )
@@ -1296,7 +1302,9 @@ def get_request_notification_list( userId: str ):
         check_guest_expired( lockDetail['lockId'] )
 
         # get latest request of lock
-        request = collection.find_one( { 'lockId': lockDetail['lockId'] }, sort = [ ( 'datetime', -1 ) ] )
+        request = collection.find_one( { 'lockId': lockDetail['lockId'], 'requestStatus': 'sent' }, sort = [ ( 'datetime', -1 ) ] )
+        if not request:
+            continue
         lock = lockCollection.find_one( { 'lockId': lockDetail['lockId'] }, { '_id': 0 } )
         requestList.append(
             {
