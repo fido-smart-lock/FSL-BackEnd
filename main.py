@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import os
 import hashlib, uuid
 from datetime import datetime
-from database import User, Lock, History, Request, UserSignup, NewLock, NewRequest, NewInvitation, Invitation, Other, Connection, Warning, UserEditProfile, Guest, LockDetail, AcceptRequest, AcceptInvitation, AcceptAllRequest, UserChangePassword, Delete, NewWarning, EditLockDetail, DeleteLockLocation
+from database import User, Lock, History, Request, UserSignup, NewLock, NewRequest, NewInvitation, Invitation, Other, Connection, Warning, UserEditProfile, Guest, LockDetail, AcceptRequest, AcceptInvitation, AcceptAllRequest, Delete, NewWarning, EditLockDetail, DeleteLockLocation
 import random
 
 app = FastAPI()
@@ -42,20 +42,6 @@ app.add_middleware(
 #
 #   Helper Functions
 #
-
-# hash password
-def hash_password( password, salt ):
-    '''
-        Hash password with salt
-        Input: password (str)
-        Output: password_hash (str)
-    '''
-
-    if not salt:
-        salt = uuid.uuid4().hex
-    password_salt = ( password + salt ).encode( 'utf-8' )
-    password_hash = hashlib.sha512( password_salt ).hexdigest()
-    return password_hash
 
 # genrate user code 
 def generate_user_code():
@@ -315,10 +301,6 @@ def signup( usersignup: UserSignup ):
     # generate user id
     userId = generate_user_id( usersignup.firstName, usersignup.lastName )
 
-    # hash password
-    salt = uuid.uuid4().hex
-    password_hash = hash_password( usersignup.password, salt )
-
     # change first name and last name to uppercase in first letter
     usersignup.firstName = usersignup.firstName.capitalize()
     usersignup.lastName = usersignup.lastName.capitalize()
@@ -331,8 +313,6 @@ def signup( usersignup: UserSignup ):
         firstName = usersignup.firstName, 
         lastName = usersignup.lastName, 
         email = usersignup.email, 
-        password_hash = password_hash, 
-        salt = salt,
         userId = userId,
         userCode = userCode,
         userImage = usersignup.userImage if usersignup.userImage else None,
@@ -347,8 +327,8 @@ def signup( usersignup: UserSignup ):
     return { 'status': 'success' }
 
 # user login
-@app.post('/login/{email}/{password}', tags=['Users'])
-def login( email: str, password: str ):
+@app.post('/login/{email}', tags=['Users'])
+def login( email: str ):
 
     # connect to database
     collection = db['Users']
@@ -360,13 +340,6 @@ def login( email: str, password: str ):
     user = collection.find_one( { 'email': email } )
     if not user:
         raise HTTPException( status_code = 404, detail = "User not found" )
-    
-    # hash password
-    password_hash = hash_password( password, user['salt'] )
-
-    # check if password is correct
-    if password_hash != user['password_hash']:
-        raise HTTPException( status_code = 401, detail = "Incorrect password" )
     
     userInfo = {   
         'userId': user['userId'],
@@ -2394,44 +2367,6 @@ def user_edit_profile( user_edit_profile: UserEditProfile ):
 
     return { 'userId': user_edit_profile.userId, 'message': 'Edit user profile successfully' }
 
-# user change password
-@app.put('/user/changePassword', tags=['Change Password'])
-def user_change_password( user_change_password: UserChangePassword ):
-    '''
-        change user password by update user password
-        input: userId (str), currentPassword (str) and newPassword (str)
-        output: dict of user detail
-        for example:
-        {
-            "userId": "js8765",
-            "message": "Password changed successfully."
-        }
-
-    '''
-
-    # connect to database
-    collection = db['Users']
-
-    # check user exist
-    user = collection.find_one( { 'userId': user_change_password.userId }, { '_id': 0 } )
-    if not user:
-        raise HTTPException( status_code = 404, detail = "User not found" )
-    
-    # get current password hash from 
-    current_password_hash = hash_password( user_change_password.currentPassword, user['salt'] )
-
-    # check current password
-    if user['password_hash'] != current_password_hash:
-        raise HTTPException( status_code = 403, detail = "Current password doesn’t match" )
-    
-    # get new password hash and salt
-    salt = uuid.uuid4().hex
-    new_password_hash = hash_password( user_change_password.newPassword, salt )
-
-    # update user password
-    collection.update_one( { 'userId': user_change_password.userId }, { '$set': { 'password_hash': new_password_hash, 'salt': salt } } )
-
-    return { 'userId': user_change_password.userId, 'message': 'Change password successfully' }
 
 # new warning
 @app.post('/newWarning', tags=['New Warning'])

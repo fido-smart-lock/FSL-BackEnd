@@ -16,7 +16,6 @@ from typing import Optional
 
 class UserSignup( BaseModel ):
     email: str
-    password: str
     firstName: str
     lastName: str
     userImage: Optional[str] = None
@@ -163,8 +162,6 @@ class User( BaseModel ):
     lastName: str
     email: str
     userImage: Optional[str] = None
-    password_hash: str
-    salt: str
     userId: str
     userCode: int
     lockLocationList: List[ str ]
@@ -179,12 +176,6 @@ class UserEditProfile( BaseModel ):
     newFirstName: Optional[str] = None
     newLastName: Optional[str] = None
     newImage: Optional[str] = None
-
-# class for user change password
-class UserChangePassword( BaseModel ):
-    userId: str
-    currentPassword: str
-    newPassword: str
 
 # class for delete
 class Delete( BaseModel ):
