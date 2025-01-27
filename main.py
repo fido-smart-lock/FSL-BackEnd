@@ -1,12 +1,15 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pymongo import MongoClient
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
 import hashlib, uuid
-from datetime import datetime
-from database import User, Lock, History, Request, UserSignup, NewLock, NewRequest, NewInvitation, Invitation, Other, Connection, Warning, UserEditProfile, Guest, LockDetail, AcceptRequest, AcceptInvitation, AcceptAllRequest, UserChangePassword, Delete, NewWarning, EditLockDetail, DeleteLockLocation
+from datetime import datetime, timedelta
+from database import User, Lock, History, RequestDb, UserSignup, NewLock, NewRequest, NewInvitation, Invitation, Other, Connection, Warning, UserEditProfile, Guest, LockDetail, AcceptRequest, AcceptInvitation, AcceptAllRequest, Delete, NewWarning, EditLockDetail, DeleteLockLocation
 import random
+import jwt
+import requests
+from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
@@ -38,24 +41,13 @@ app.add_middleware(
     allow_headers = ['*'],
 )
 
+# hardware URL
+HARDWARE_URL = "http://172.20.10.6/set-state"
+
 ##################################################
 #
 #   Helper Functions
 #
-
-# hash password
-def hash_password( password, salt ):
-    '''
-        Hash password with salt
-        Input: password (str)
-        Output: password_hash (str)
-    '''
-
-    if not salt:
-        salt = uuid.uuid4().hex
-    password_salt = ( password + salt ).encode( 'utf-8' )
-    password_hash = hashlib.sha512( password_salt ).hexdigest()
-    return password_hash
 
 # genrate user code 
 def generate_user_code():
@@ -279,6 +271,41 @@ def check_guest_expired( lockId ):
 
             delete_lock_from_user( deleteLockFromUser )
 
+# generate JWT token by user id
+def generate_jwt_token( userId, lockId ):
+    '''
+        Generate JWT token
+        Input: user id (str) and lock id (str)
+        Output: JWT token (str)
+    '''
+
+    payload = {
+        "userId": userId,
+        "lockId": lockId,
+        "exp": datetime.now() + timedelta( minutes = 30 ),
+    }
+
+    # generate JWT token
+    token = jwt.encode(payload, password, algorithm="HS256")
+    return token
+
+# verify JWT token
+def verify_jwt_token( token ):
+    '''
+        Verify JWT token
+        Input: token (str)
+        Output: payload (dict)
+    '''
+
+    try:
+        # decode JWT token
+        payload = jwt.decode(token, password, algorithms=["HS256"])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
 ##################################################
 #
 #   API
@@ -315,10 +342,6 @@ def signup( usersignup: UserSignup ):
     # generate user id
     userId = generate_user_id( usersignup.firstName, usersignup.lastName )
 
-    # hash password
-    salt = uuid.uuid4().hex
-    password_hash = hash_password( usersignup.password, salt )
-
     # change first name and last name to uppercase in first letter
     usersignup.firstName = usersignup.firstName.capitalize()
     usersignup.lastName = usersignup.lastName.capitalize()
@@ -331,8 +354,6 @@ def signup( usersignup: UserSignup ):
         firstName = usersignup.firstName, 
         lastName = usersignup.lastName, 
         email = usersignup.email, 
-        password_hash = password_hash, 
-        salt = salt,
         userId = userId,
         userCode = userCode,
         userImage = usersignup.userImage if usersignup.userImage else None,
@@ -347,8 +368,8 @@ def signup( usersignup: UserSignup ):
     return { 'status': 'success' }
 
 # user login
-@app.post('/login/{email}/{password}', tags=['Users'])
-def login( email: str, password: str ):
+@app.post('/login/{email}', tags=['Users'])
+def login( email: str ):
 
     # connect to database
     collection = db['Users']
@@ -360,13 +381,6 @@ def login( email: str, password: str ):
     user = collection.find_one( { 'email': email } )
     if not user:
         raise HTTPException( status_code = 404, detail = "User not found" )
-    
-    # hash password
-    password_hash = hash_password( password, user['salt'] )
-
-    # check if password is correct
-    if password_hash != user['password_hash']:
-        raise HTTPException( status_code = 401, detail = "Incorrect password" )
     
     userInfo = {   
         'userId': user['userId'],
@@ -974,7 +988,7 @@ def post_new_request( new_request: NewRequest ):
     requestId = generate_request_id()
 
     # create new request
-    newRequest = Request(
+    newRequest = RequestDb(
         reqId = requestId,
         lockId = new_request.lockId,
         lockName = new_request.lockName,
@@ -2394,44 +2408,6 @@ def user_edit_profile( user_edit_profile: UserEditProfile ):
 
     return { 'userId': user_edit_profile.userId, 'message': 'Edit user profile successfully' }
 
-# user change password
-@app.put('/user/changePassword', tags=['Change Password'])
-def user_change_password( user_change_password: UserChangePassword ):
-    '''
-        change user password by update user password
-        input: userId (str), currentPassword (str) and newPassword (str)
-        output: dict of user detail
-        for example:
-        {
-            "userId": "js8765",
-            "message": "Password changed successfully."
-        }
-
-    '''
-
-    # connect to database
-    collection = db['Users']
-
-    # check user exist
-    user = collection.find_one( { 'userId': user_change_password.userId }, { '_id': 0 } )
-    if not user:
-        raise HTTPException( status_code = 404, detail = "User not found" )
-    
-    # get current password hash from 
-    current_password_hash = hash_password( user_change_password.currentPassword, user['salt'] )
-
-    # check current password
-    if user['password_hash'] != current_password_hash:
-        raise HTTPException( status_code = 403, detail = "Current password doesn’t match" )
-    
-    # get new password hash and salt
-    salt = uuid.uuid4().hex
-    new_password_hash = hash_password( user_change_password.newPassword, salt )
-
-    # update user password
-    collection.update_one( { 'userId': user_change_password.userId }, { '$set': { 'password_hash': new_password_hash, 'salt': salt } } )
-
-    return { 'userId': user_change_password.userId, 'message': 'Change password successfully' }
 
 # new warning
 @app.post('/newWarning', tags=['New Warning'])
@@ -2946,3 +2922,58 @@ def delete_lock_location( delete_lock_location: DeleteLockLocation ):
     userCollection.update_one( { 'userId': delete_lock_location.userId }, { '$pull': { 'lockLocationList': delete_lock_location.lockLocation } } )
 
     return { 'userId': delete_lock_location.userId, 'lockLocation': delete_lock_location.lockLocation, 'message': 'Delete lock location successfully' }
+
+# generate jwt token by userId and lockId
+@app.post('/generateToken/{userId}/{lockId}', tags=['Generate Token'])
+def generate_token( userId: str, lockId: str ):
+    '''
+        generate jwt token by userId and lockId
+        input: userId (str) and lockId (str)
+        output: dict of token
+        for example:
+        {
+            "userId": "js7694",
+            "lockId": "12345",
+            "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJsb2NrSWQiOiIxMjM0NSJ9.5e8f6b6d2e4c3b2b"
+        }
+    '''
+
+    # generate jwt token
+    token = generate_jwt_token( userId, lockId )
+
+    return { 'userId': userId, 'lockId': lockId, 'token': token }
+
+# unlock door
+@app.post('/unlockDoor', tags=['Unlock Door'])
+def unlock_door( request: Request ):
+    '''
+        unlock door by check jwt token
+        input: request
+        output: dict of message
+        for example:
+        {
+            "message": "Door is unlocked"
+        }
+    '''
+
+    # get JWT Token from Authorization header
+    token = request.headers.get('Authorization')
+    if not token or not token.startswith('Bearer '):
+        raise HTTPException(status_code=401, detail="Authorization header missing or invalid")
+
+    # get only the token
+    token = token.split(" ")[1]
+
+    # verify JWT Token
+    payload = verify_jwt_token(token)
+
+    # connect to hardware
+    try:
+        # send state = 1 to unlock the door
+        hardware_response = requests.get(HARDWARE_URL)  
+        if hardware_response.status_code == 200:
+            return JSONResponse(content={"userId": payload['userId'], "lockId": payload['lockId'] ,"message": "Door unlocked successfully"}, status_code=200)
+        else:
+            return JSONResponse(content={"error": "Failed to unlock the door"}, status_code=500)
+    except requests.exceptions.RequestException as e:
+        return JSONResponse(content={"error": f"Hardware request failed: {str(e)}"}, status_code=500)    
