@@ -29,7 +29,7 @@ class History( BaseModel ):
     datetime: datetime
 
 # class for request
-class Request( BaseModel ):
+class RequestDb( BaseModel ):
     reqId: str
     userId: str
     lockId: str
