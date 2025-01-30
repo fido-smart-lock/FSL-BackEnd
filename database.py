@@ -88,7 +88,6 @@ class AcceptInvitation( BaseModel ):
 class Connection( BaseModel ):
     conId: str
     userId: str
-    userRole: str
     lockId: str
     datetime: datetime
 

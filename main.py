@@ -1402,7 +1402,6 @@ def get_connect_notification_list( userId: str ):
     # connect to database
     conCollection = db['Connect']
     userCollection = db['Users']
-    lockCollection = db['Locks']
 
     # get user
     user = userCollection.find_one( { 'userId': userId }, { '_id': 0 } )
@@ -1936,7 +1935,6 @@ def accept_request( accept_request: AcceptRequest ):
     collection = db['Request']
     lockCollection = db['Locks']
     userCollection = db['Users']
-    connectCollection = db['Connect']
     hisCollection = db['History']
     otherCollection = db['Other']
 
@@ -1978,25 +1976,6 @@ def accept_request( accept_request: AcceptRequest ):
     # NOTE: add location to lock location list if not exists
     if request['lockLocation'] not in userCollection.find_one( { 'userId': request['userId'] }, { '_id': 0 } )['lockLocationList']:
         userCollection.update_one( { 'userId': request['userId'] }, { '$push': { 'lockLocationList': request['lockLocation'] } } )
-
-    # generate new connect id
-    connectId = generate_connect_id()
-
-    # create new connect
-    newConnect = Connection(
-        conId = connectId,
-        lockId = request['lockId'],
-        userId = request['userId'],
-        userRole = 'guest',
-        datetime = datetime.now(),
-    )
-
-    # add new connect to database
-    connectCollection.insert_one( newConnect.dict() )
-
-    # add new connect to lock
-    # NOTE: add new connect to lock by append new connect to connect list
-    lockCollection.update_one( { 'lockId': request['lockId'] }, { '$push': { 'connect': connectId } } )
 
     # generate new history id
     historyId = generate_history_id()
@@ -2154,7 +2133,6 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
     inviteCollection = db['Invitation']
     lockCollection = db['Locks']
     userCollection = db['Users']
-    conCollection = db['Connect']
     hisCollection = db['History']
     reqCollection = db['Request']
     otherCollection = db['Other']
@@ -2205,25 +2183,6 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
     # add location to lock location list in user
     # NOTE: add location to lock location list if not in list
     userCollection.update_one( { 'userId': invitation['desUserId'] }, { '$addToSet': { 'lockLocationList': accept_invitation.lockLocation } } )
-
-    # generate new connect id
-    connectId = generate_connect_id()
-
-    # create new connect
-    newConnect = Connection(
-        conId = connectId,
-        lockId = invitation['lockId'],
-        userId = invitation['desUserId'],
-        userRole = invitation['role'],
-        datetime = datetime.now(),
-    )
-
-    # add new connect to database
-    conCollection.insert_one( newConnect.dict() )
-
-    # add new connect to lock
-    # NOTE: add new connect to lock by append new connect to connect list
-    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$push': { 'connect': connectId } } )
 
     # generate new history id
     historyId = generate_history_id()
@@ -2966,6 +2925,28 @@ def unlock_door( request: Request ):
 
     # verify JWT Token
     payload = verify_jwt_token(token)
+
+    # connect to database
+    connectCollection = db['Connect']
+    lockCollection = db['Locks']
+    
+    # generate new connect id
+    connectId = generate_connect_id()
+
+    # create new connect
+    newConnect = Connection(
+        conId = connectId,
+        lockId = payload['lockId'],
+        userId = payload['userId'],
+        datetime = datetime.now(),
+    )
+
+    # add new connect to database
+    connectCollection.insert_one( newConnect.dict() )
+
+    # add new connect to lock
+    # NOTE: add new connect to lock by append new connect to connect list
+    lockCollection.update_one( { 'lockId': payload['lockId'] }, { '$push': { 'connect': connectId } } )
 
     # connect to hardware
     try:
