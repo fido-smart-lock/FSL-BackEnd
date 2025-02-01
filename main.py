@@ -8,8 +8,8 @@ from datetime import datetime, timedelta
 from database import User, Lock, History, RequestDb, UserSignup, NewLock, NewRequest, NewInvitation, Invitation, Other, Connection, Warning, UserEditProfile, Guest, LockDetail, AcceptRequest, AcceptInvitation, AcceptAllRequest, Delete, NewWarning, EditLockDetail, DeleteLockLocation
 import random
 import jwt
-import requests
-from fastapi.responses import JSONResponse
+# import requests
+# from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
@@ -41,8 +41,8 @@ app.add_middleware(
     allow_headers = ['*'],
 )
 
-# hardware URL
-HARDWARE_URL = "http://172.20.10.6/set-state"
+# # hardware URL
+# HARDWARE_URL = "http://172.20.10.6/set-state"
 
 ##################################################
 #
@@ -271,6 +271,63 @@ def check_guest_expired( lockId ):
 
             delete_lock_from_user( deleteLockFromUser )
 
+# check if admin in lock is exits
+def check_admin_in_lock( lockId ):
+    '''
+        Check if admin in lock is exits
+        delete lock from all users
+        Input: lockId (str)
+    '''
+
+    # connect to database
+    lockCollection = db['Locks']
+    userCollection = db['Users']
+    historyCollection = db['History']
+    connectCollection = db['Connect']
+    warningCollection = db['Warning']
+    otherCollection = db['Other']
+
+    # get lock
+    lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
+    if not lock:
+        pass
+
+    # check if no one in lock
+    if not lock['admin'] and not lock['member'] and not lock['guest']:
+        
+        # delete lock from database
+        lockCollection.delete_one( { 'lockId': lockId } )
+
+        # delete history from database
+        historyCollection.delete_many( { 'lockId': lockId } )
+
+        # delete connect from database
+        connectCollection.delete_many( { 'lockId': lockId } )
+
+        # delete warning from database
+        warningCollection.delete_many( { 'lockId': lockId } )
+
+        # delete other from database
+        otherCollection.delete_many( { 'lockId': lockId } )
+
+
+    # check if admin in lock is exits
+    if not lock['admin']:
+        # delete lock from all users
+        for userId in lock['member']:
+            deleteLockFromUser = Delete(
+                userId = userId,
+                lockId = lockId,
+            )
+            delete_lock_from_user( deleteLockFromUser )
+
+        for guest in lock['guest']:
+            deleteLockFromUser = Delete(
+                userId = guest['userId'],
+                lockId = lockId,
+            )
+            delete_lock_from_user( deleteLockFromUser )
+
 # generate JWT token by user id
 def generate_jwt_token( userId, lockId ):
     '''
@@ -326,7 +383,7 @@ def signup( usersignup: UserSignup ):
     '''
         normal sign up
         input: UserSignup
-        output: dict
+        output: { 'status': 'success' }
     '''
 
     # connect to database
@@ -370,6 +427,16 @@ def signup( usersignup: UserSignup ):
 # user login
 @app.post('/login/{email}', tags=['Users'])
 def login( email: str ):
+    '''
+        normal login
+        input: email (str)
+        output: dict
+        for example:
+        {
+            "userId": "js7694",
+            "userCode": 6392
+        }
+    '''
 
     # connect to database
     collection = db['Users']
@@ -525,6 +592,11 @@ def get_user_lock( userId: str, lockLocationActiveStr: str = None):
     # check guest is expired before get lock
     for lockDetail in user['guest']:
         check_guest_expired( lockDetail['lockId'] )
+        check_admin_in_lock( lockDetail['lockId'] )
+
+    # get lock id list
+    for lockDetail in user['admin']+user['member']:
+        check_admin_in_lock( lockDetail['lockId'] )
 
     lockLocationList = user['lockLocationList']
 
@@ -593,6 +665,9 @@ def get_lock_detail( lockId: str, userId: str ):
     lockCollection = db['Locks']
     userCollection = db['Users']
     reqCollection = db['Request']
+
+    # check admin in lock is exits
+    check_admin_in_lock( lockId )
 
     # get lock
     lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
@@ -2558,6 +2633,9 @@ def delete_user_from_lock( delete_user_from_lock: Delete ):
         # delete every other that match with userId and lockId
         otherCollection.delete_many( { 'userId': delete_user_from_lock.userId, 'lockId': delete_user_from_lock.lockId } )
 
+        # check admin in lock
+        check_admin_in_lock( delete_user_from_lock.lockId )
+
         return { 'userId': delete_user_from_lock.userId, 'lockId': delete_user_from_lock.lockId, 'message': 'Delete user successfully' }
     
 # accept removal
@@ -2589,8 +2667,6 @@ def accept_removal( userId: str, lockId: str ):
     
     # get user
     user = userCollection.find_one( { 'userId': userId }, { '_id': 0 } )
-
-    print(other)
 
     # check guest is expired before get lock
     check_guest_expired( lockId )
@@ -2685,7 +2761,7 @@ def delete_lock_from_user( delete_lock_from_user: Delete ):
     if not user:
         raise HTTPException( status_code = 404, detail = "User not found" )
     
-    # get lck detail
+    # get lock detail
     lockDetail = userCollection.find_one( { 'userId': delete_lock_from_user.userId, 'admin': { '$elemMatch': { 'lockId': delete_lock_from_user.lockId } } }, { '_id': 0, 'admin.$': 1 } )
     if not lockDetail:
         lockDetail = userCollection.find_one( { 'userId': delete_lock_from_user.userId, 'member': { '$elemMatch': { 'lockId': delete_lock_from_user.lockId } } }, { '_id': 0, 'member.$': 1 } )
@@ -2728,10 +2804,13 @@ def delete_lock_from_user( delete_lock_from_user: Delete ):
     # delete every other that match with userId and lockId
     otherCollection.delete_many( { 'userId': delete_lock_from_user.userId, 'lockId': delete_lock_from_user.lockId } )
 
+    # check admin in lock
+    check_admin_in_lock( delete_lock_from_user.lockId )
+
     return { 'userId': delete_lock_from_user.userId, 'lockId': delete_lock_from_user.lockId, 'message': 'Delete lock successfully' }
 
 # edit lock detail
-@app.put('/editLockDetail', tags=['Edit Lock Detail'])
+@app.put('/editLockDetail', tags=['Lock Detail'])
 def edit_lock_detail( edit_lock_detail: EditLockDetail ):
     '''
         edit lock detail by update lock detail
@@ -2821,7 +2900,7 @@ def edit_lock_detail( edit_lock_detail: EditLockDetail ):
     return { 'message': 'Edit lock detail successfully' }
 
 # check lock exits
-@app.get('/checkLock/{lockId}', tags=['Check Lock'])
+@app.get('/checkLock/{lockId}', tags=['Lock Detail'])
 def check_lock( lockId: str ):
     '''
         check lock exits by get lock detail
@@ -2836,6 +2915,9 @@ def check_lock( lockId: str ):
 
     # connect to database
     collection = db['Locks']
+
+    # check admin in lock is exits
+    check_admin_in_lock( lockId )
 
     # check guest is expired before get lock
     check_guest_expired( lockId )
@@ -2883,7 +2965,7 @@ def delete_lock_location( delete_lock_location: DeleteLockLocation ):
     return { 'userId': delete_lock_location.userId, 'lockLocation': delete_lock_location.lockLocation, 'message': 'Delete lock location successfully' }
 
 # generate jwt token by userId and lockId
-@app.post('/generateToken/{userId}/{lockId}', tags=['Generate Token'])
+@app.post('/generateToken/{userId}/{lockId}', tags=['Token'])
 def generate_token( userId: str, lockId: str ):
     '''
         generate jwt token by userId and lockId
@@ -2903,16 +2985,12 @@ def generate_token( userId: str, lockId: str ):
     return { 'userId': userId, 'lockId': lockId, 'token': token }
 
 # unlock door
-@app.post('/unlockDoor', tags=['Unlock Door'])
+@app.post('/unlockDoor', tags=['Token'])
 def unlock_door( request: Request ):
     '''
         unlock door by check jwt token
         input: request
-        output: dict of message
-        for example:
-        {
-            "message": "Door is unlocked"
-        }
+        output: boolean
     '''
 
     # get JWT Token from Authorization header
@@ -2948,13 +3026,15 @@ def unlock_door( request: Request ):
     # NOTE: add new connect to lock by append new connect to connect list
     lockCollection.update_one( { 'lockId': payload['lockId'] }, { '$push': { 'connect': connectId } } )
 
-    # connect to hardware
-    try:
-        # send state = 1 to unlock the door
-        hardware_response = requests.get(HARDWARE_URL)  
-        if hardware_response.status_code == 200:
-            return JSONResponse(content={"userId": payload['userId'], "lockId": payload['lockId'] ,"message": "Door unlocked successfully"}, status_code=200)
-        else:
-            return JSONResponse(content={"error": "Failed to unlock the door"}, status_code=500)
-    except requests.exceptions.RequestException as e:
-        return JSONResponse(content={"error": f"Hardware request failed: {str(e)}"}, status_code=500)    
+    return True
+
+    # # connect to hardware
+    # try:
+    #     # send state = 1 to unlock the door
+    #     hardware_response = requests.get(HARDWARE_URL)  
+    #     if hardware_response.status_code == 200:
+    #         return JSONResponse(content={"userId": payload['userId'], "lockId": payload['lockId'] ,"message": "Door unlocked successfully"}, status_code=200)
+    #     else:
+    #         return JSONResponse(content={"error": "Failed to unlock the door"}, status_code=500)
+    # except requests.exceptions.RequestException as e:
+    #     return JSONResponse(content={"error": f"Hardware request failed: {str(e)}"}, status_code=500)    
