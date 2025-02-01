@@ -1023,7 +1023,7 @@ def post_new_lock( new_lock: NewLock ):
     return { 'userId': new_lock.userId, 'lockId': new_lock.lockId, 'message': 'Create new lock successfully' }
 
 # post new request
-@app.post('/request', tags=['Create New Lock'])
+@app.post('/request', tags=['Request'])
 def post_new_request( new_request: NewRequest ):
     '''
         post new request to Request format
@@ -1122,7 +1122,7 @@ def post_new_request( new_request: NewRequest ):
     return { 'lockId': new_request.lockId, 'userId': new_request.userId, 'message': 'Send request successfully' }
 
 # post new invitation
-@app.post('/invitation', tags=['Add New People'])
+@app.post('/invitation', tags=['Invitation'])
 def post_new_invitation( new_invitation: NewInvitation ):
     '''
         post new invitation to Invitation format
@@ -1230,7 +1230,7 @@ def post_lock_location( userId: str, lockLocationStr: str ):
     return { 'userId': userId, 'message': 'Update lock location successfully' }
 
 # get request by lockId
-@app.get('/request/{lockId}', tags=['Request Management'])
+@app.get('/request/{lockId}', tags=['Request'])
 def get_request_by_lockId( lockId: str ):
     '''
         get request by lockId
@@ -1985,7 +1985,7 @@ def delete_other_notification( notiId: str ):
     return { 'notiId': notiId, 'message': 'Delete notification successfully' }
 
 # accept request 
-@app.put('/acceptRequest', tags=['Accept Request'])
+@app.put('/acceptRequest', tags=['Request'])
 def accept_request( accept_request: AcceptRequest ):
     '''
         accept request by update request status to accepted 
@@ -2106,7 +2106,7 @@ def accept_request( accept_request: AcceptRequest ):
     return { 'reqId': accept_request.reqId, 'message': 'Accept request successfully' }
 
 # accept all request
-@app.put('/acceptAllRequest', tags=['Accept Request'])
+@app.put('/acceptAllRequest', tags=['Request'])
 def accept_all_request( accept_all_request: AcceptAllRequest ):
     '''
         accept all request by using function accept_request
@@ -2139,7 +2139,7 @@ def accept_all_request( accept_all_request: AcceptAllRequest ):
     return { 'lockId': accept_all_request.lockId, 'message': 'All request have been accepted' }
 
 # decline request
-@app.delete('/declineRequest/{reqId}', tags=['Decline Request'])
+@app.delete('/declineRequest/{reqId}', tags=['Request'])
 def decline_request( reqId: str ):
     '''
         decline request by update request status to declined
@@ -2184,7 +2184,7 @@ def decline_request( reqId: str ):
     return { 'reqId': reqId, 'message': 'Decline request successfully' }
 
 # accecpt invitation
-@app.put('/acceptInvitation', tags=['Accept Invitation'])
+@app.put('/acceptInvitation', tags=['Invitation'])
 def accept_invitation( accept_invitation: AcceptInvitation ):
     '''
         accept invitation by update invitation status to accepted
@@ -2316,7 +2316,7 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
     return { 'invId': invitation['invId'], 'message': 'Accept invitation successfully' }
 
 # decline invitation
-@app.delete('/declineInvitation/{otherId}', tags=['Decline Invitation'])
+@app.delete('/declineInvitation/{otherId}', tags=['Invitation'])
 def decline_invitation( otherId: str ):
     '''
         decline invitation by update invitation status to declined
@@ -2639,7 +2639,7 @@ def delete_user_from_lock( delete_user_from_lock: Delete ):
         return { 'userId': delete_user_from_lock.userId, 'lockId': delete_user_from_lock.lockId, 'message': 'Delete user successfully' }
     
 # accept removal
-@app.put('/acceptRemoval/{userId}/{lockId}', tags=['Accept Removal'])
+@app.put('/acceptRemoval/{userId}/{lockId}', tags=['Removal'])
 def accept_removal( userId: str, lockId: str ):
     '''
         accept removal by delete user from lock
@@ -2702,7 +2702,7 @@ def accept_removal( userId: str, lockId: str ):
     return { 'userId': userId, 'lockId': lockId, 'message': 'Accept removal successfully' }
 
 # decline removal
-@app.delete('/declineRemoval/{userId}/{lockId}', tags=['Decline Removal'])
+@app.delete('/declineRemoval/{userId}/{lockId}', tags=['Removal'])
 def decline_removal( userId: str, lockId: str ):
     '''
         decline removal by delete other
@@ -2810,7 +2810,7 @@ def delete_lock_from_user( delete_lock_from_user: Delete ):
     return { 'userId': delete_lock_from_user.userId, 'lockId': delete_lock_from_user.lockId, 'message': 'Delete lock successfully' }
 
 # edit lock detail
-@app.put('/editLockDetail', tags=['Lock Detail'])
+@app.put('/editLockDetail', tags=['Locks Detail'])
 def edit_lock_detail( edit_lock_detail: EditLockDetail ):
     '''
         edit lock detail by update lock detail
@@ -2900,7 +2900,7 @@ def edit_lock_detail( edit_lock_detail: EditLockDetail ):
     return { 'message': 'Edit lock detail successfully' }
 
 # check lock exits
-@app.get('/checkLock/{lockId}', tags=['Lock Detail'])
+@app.get('/checkLock/{lockId}', tags=['Locks Detail'])
 def check_lock( lockId: str ):
     '''
         check lock exits by get lock detail
