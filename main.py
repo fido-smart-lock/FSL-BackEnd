@@ -286,6 +286,7 @@ def check_admin_in_lock( lockId ):
     connectCollection = db['Connect']
     warningCollection = db['Warning']
     otherCollection = db['Other']
+    reqCollection = db['Request']
 
     # get lock
     lock = lockCollection.find_one( { 'lockId': lockId }, { '_id': 0 } )
@@ -310,6 +311,8 @@ def check_admin_in_lock( lockId ):
         # delete other from database
         otherCollection.delete_many( { 'lockId': lockId } )
 
+        # delete request from database
+        reqCollection.delete_many( { 'lockId': lockId } )
 
     # check if admin in lock is exits
     if not lock['admin']:
@@ -1203,7 +1206,7 @@ def post_new_invitation( new_invitation: NewInvitation ):
     return { 'srcUserId': new_invitation.srcUserId, 'desUserId': new_invitation.desUserId, 'role': new_invitation.role, 'dateTime': new_invitation.dateTime, 'message': 'Send invitation successfully' }
     
 # post lock location
-@app.post('/lockLocation/{userId}/{lockLocationStr}', tags=['Locks Setting'])
+@app.post('/lockLocation/{userId}/{lockLocationStr}', tags=['Locks List'])
 def post_lock_location( userId: str, lockLocationStr: str ):
     '''
         post lock location to lock location list of user
@@ -1992,8 +1995,6 @@ def accept_request( accept_request: AcceptRequest ):
         add user to lock by append user to guest role
         add lock to user by append lock id to guest list
         add location to lock location list of user
-        post history and add history to lock
-        post connect add add connect to lock
         post other
         delete request from lock
         delete other
@@ -2010,7 +2011,6 @@ def accept_request( accept_request: AcceptRequest ):
     collection = db['Request']
     lockCollection = db['Locks']
     userCollection = db['Users']
-    hisCollection = db['History']
     otherCollection = db['Other']
 
     # get request by reqId
@@ -2051,25 +2051,6 @@ def accept_request( accept_request: AcceptRequest ):
     # NOTE: add location to lock location list if not exists
     if request['lockLocation'] not in userCollection.find_one( { 'userId': request['userId'] }, { '_id': 0 } )['lockLocationList']:
         userCollection.update_one( { 'userId': request['userId'] }, { '$push': { 'lockLocationList': request['lockLocation'] } } )
-
-    # generate new history id
-    historyId = generate_history_id()
-
-    # create new history
-    newHistory = History(
-        hisId = historyId, 
-        userId = request['userId'],
-        lockId = request['lockId'],
-        status = 'connect',
-        datetime = datetime.now(),
-    )
-
-    # add new history to database
-    hisCollection.insert_one( newHistory.dict() )
-
-    # add new history to lock
-    # NOTE: add new history to lock by append new history to history list
-    lockCollection.update_one( { 'lockId': request['lockId'] }, { '$push': { 'history': historyId } } )
 
     # generate new other id
     otherId = generate_other_id()
@@ -2191,8 +2172,6 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
         add user to lock by append user to guest role
         add lock to user by append lock id to guest list
         add location to lock location list of user
-        post history and add history to lock
-        post connect add add connect to lock
         post other 
         delete other
         input: invId (str)
@@ -2258,25 +2237,6 @@ def accept_invitation( accept_invitation: AcceptInvitation ):
     # add location to lock location list in user
     # NOTE: add location to lock location list if not in list
     userCollection.update_one( { 'userId': invitation['desUserId'] }, { '$addToSet': { 'lockLocationList': accept_invitation.lockLocation } } )
-
-    # generate new history id
-    historyId = generate_history_id()
-
-    # create new history
-    newHistory = History(
-        hisId = historyId, 
-        userId = invitation['desUserId'],
-        lockId = invitation['lockId'],
-        status = 'connect',
-        datetime = datetime.now(),
-    )
-
-    # add new history to database
-    hisCollection.insert_one( newHistory.dict() )
-
-    # add new history to lock
-    # NOTE: add new history to lock by append new history to history list
-    lockCollection.update_one( { 'lockId': invitation['lockId'] }, { '$push': { 'history': historyId } } )
 
     # generate new other id
     otherId = generate_other_id()
@@ -2401,7 +2361,7 @@ def get_user_detail( userId: str ):
     return userDetail
 
 # user edit profile
-@app.put('/user/editProfile', tags=['Edit Profile'])
+@app.put('/user/editProfile', tags=['User Setting'])
 def user_edit_profile( user_edit_profile: UserEditProfile ):
     '''
         edit user profile by update user detail
@@ -2984,13 +2944,15 @@ def generate_token( userId: str, lockId: str ):
 
     return { 'userId': userId, 'lockId': lockId, 'token': token }
 
-# unlock door
+# check token
 @app.post('/unlockDoor', tags=['Token'])
 def unlock_door( request: Request ):
     '''
-        unlock door by check jwt token
+        check jwt token
+        add new connect to database
+        add new history to database
         input: request
-        output: boolean
+        output: bool
     '''
 
     # get JWT Token from Authorization header
@@ -3007,6 +2969,7 @@ def unlock_door( request: Request ):
     # connect to database
     connectCollection = db['Connect']
     lockCollection = db['Locks']
+    hisCollection = db['History']
     
     # generate new connect id
     connectId = generate_connect_id()
@@ -3025,6 +2988,25 @@ def unlock_door( request: Request ):
     # add new connect to lock
     # NOTE: add new connect to lock by append new connect to connect list
     lockCollection.update_one( { 'lockId': payload['lockId'] }, { '$push': { 'connect': connectId } } )
+
+    # generate new history id
+    historyId = generate_history_id()
+
+    # create new history
+    newHistory = History(
+        hisId = historyId,
+        userId = payload['userId'],
+        lockId = payload['lockId'],
+        status = 'connect',
+        datetime = datetime.now(),
+    )
+
+    # add new history to database
+    hisCollection.insert_one( newHistory.dict() )
+
+    # add new history to lock
+    # NOTE: add new history to lock by append new history to history list
+    lockCollection.update_one( { 'lockId': payload['lockId'] }, { '$push': { 'history': historyId } } )
 
     return True
 
